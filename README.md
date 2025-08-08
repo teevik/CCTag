@@ -62,7 +62,7 @@ For the library interface, see [ICCTag.hpp](src/cctag/ICCTag.hpp).
 Documentation
 -------------
 
-The documentation can be found on the [Read the Docs page](https://cctag.readthedocs.io/en/doc-first/index.html)
+The documentation can be found on the [Read the Docs page](https://cctag.readthedocs.io/en/latest/)
 
 
 License
