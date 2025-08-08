@@ -77,8 +77,8 @@ jobs:
     env:
       buildDir: '${{ github.workspace }}\build\'
       vcpkgDir: '${{ github.workspace }}\..\e\vcpkg'
-      # commit for version 2023.11.20
-      COMMIT_ID: a42af01b72c28a8e1d7b48107b33e4f286a55ef6
+      # commit for version 2025.07.25
+      COMMIT_ID: dd3097e305afa53f7b4312371f62058d2e665320
 
     steps:
     - name: Checkout
