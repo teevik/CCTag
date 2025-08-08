@@ -107,7 +107,7 @@ jobs:
           boost-foreach
           boost-iterator
           boost-lexical-cast
-          boost-math
+          boost-math[legacy]
           boost-mpl
           boost-multi-array
           boost-ptr-container
