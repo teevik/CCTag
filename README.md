@@ -1,14 +1,16 @@
-CCTag library
-===================
-[![CII Best Practices](https://bestpractices.coreinfrastructure.org/projects/3989/badge)](https://bestpractices.coreinfrastructure.org/projects/3989) [![Codacy Badge](https://app.codacy.com/project/badge/Grade/a99505cea4bd4cd195b9b65b6114ee90)](https://www.codacy.com/manual/alicevision/CCTag?utm_source=github.com&amp;utm_medium=referral&amp;utm_content=alicevision/CCTag&amp;utm_campaign=Badge_Grade)
+# CCTag library
+
+[![CII Best Practices](https://bestpractices.coreinfrastructure.org/projects/3989/badge)](https://bestpractices.coreinfrastructure.org/projects/3989) 
+[![Codacy Badge](https://app.codacy.com/project/badge/Grade/5b8f7ee0d05b4c8fb5e6d6602e011217)](https://app.codacy.com/gh/alicevision/CCTag/dashboard?utm_source=gh&utm_medium=referral&utm_content=&utm_campaign=Badge_grade)
+[![Continuous Integration](https://github.com/alicevision/CCTag/actions/workflows/continuous-integration.yml/badge.svg)](https://github.com/alicevision/CCTag/actions/workflows/continuous-integration.yml)
 
 Detection of CCTag markers made up of concentric circles. Implementations in both CPU and GPU.
 
-The library is the implementation of the paper: 
+The library is the implementation of the paper:
 
-* Lilian Calvet, Pierre Gurdjos, Carsten Griwodz, Simone Gasparini. **Detection and Accurate Localization of Circular Fiducials Under Highly Challenging Conditions.** In: *Proceedings of the International Conference on Computer Vision and Pattern Recognition (CVPR 2016)*, Las Vegas, E.-U., IEEE Computer Society, p. 562-570, June 2016.  https://doi.org/10.1109/CVPR.2016.67 
+* Lilian Calvet, Pierre Gurdjos, Carsten Griwodz, Simone Gasparini. **Detection and Accurate Localization of Circular Fiducials Under Highly Challenging Conditions.** In: *Proceedings of the International Conference on Computer Vision and Pattern Recognition (CVPR 2016)*, Las Vegas, E.-U., IEEE Computer Society, p. 562-570, June 2016.  <https://doi.org/10.1109/CVPR.2016.67>
 
-If you want to cite this work in your publication, please use the following 
+If you want to cite this work in your publication, please use the following
 
 ```latex
 @inproceedings{calvet2016Detection,
@@ -23,8 +25,7 @@ If you want to cite this work in your publication, please use the following
 }
 ```
 
-Marker library
----------
+## Marker library
 
 Markers to print are located [here](markersToPrint).
 
@@ -37,50 +38,37 @@ CCTags requires either CUDA 8.0 and newer or CUDA 7.0 (CUDA 7.5 builds are known
 
 Check your graphic card CUDA compatibility [here](https://github.com/tpruvot/ccminer/wiki/Compatibility).
 
-Building
---------
+## Building
 
 See [INSTALL](INSTALL.md) text file.
 
-Continuous integration:
-
-|         	| windows 	| linux 	|
-|---------	|:-------:	|:-----:	|
-| master  	|  [![Build status](https://ci.appveyor.com/api/projects/status/909b01qlixwslvmf?svg=true)](https://ci.appveyor.com/project/AliceVision/cctag)       	| ![Continuous Integration](https://github.com/alicevision/CCTag/workflows/Continuous%20Integration/badge.svg?branch=master)      	|
-| develop 	|  [![Build status](https://ci.appveyor.com/api/projects/status/909b01qlixwslvmf/branch/develop?svg=true)](https://ci.appveyor.com/project/AliceVision/cctag/branch/develop)        	| ![Continuous Integration](https://github.com/alicevision/CCTag/workflows/Continuous%20Integration/badge.svg?branch=develop)       	|
-
-Running
--------
+## Running
 
 Once compiled, you might want to run the CCTag detection on a sample image:
 
 ```bash
-$ build/src/detection -n 3 -i sample/01.png
+build/src/detection -n 3 -i sample/01.png
 ```
+
 For the library interface, see [ICCTag.hpp](src/cctag/ICCTag.hpp).
 
-Documentation
--------------
+## Documentation
 
 The documentation can be found on the [Read the Docs page](https://cctag.readthedocs.io/en/latest/)
 
-
-License
--------
+## License
 
 CCTag is licensed under [MPL v2 license](COPYING.md).
 
-Authors
--------
+## Authors
 
-Lilian Calvet (CPU, lilian.calvet@gmail.com)  
-Carsten Griwodz (GPU, griff@simula.no)  
-Stian Vrba (CPU, vrba@mixedrealities.no)  
-Cyril Pichard (pih@mikrosimage.eu)  
-Simone Gasparini (simone.gasparini@gmail.com)
+Lilian Calvet (CPU, <lilian.calvet@gmail.com>)  
+Carsten Griwodz (GPU, <griff@simula.no>)  
+Stian Vrba (CPU, <vrba@mixedrealities.no>)  
+Cyril Pichard (<pih@mikrosimage.eu>)  
+Simone Gasparini (<simone.gasparini@gmail.com>)
 
-Acknowledgments
----------
+## Acknowledgments
 
 This has been developed in the context of the European project [POPART](https://alicevision.org/popart/) founded by European Union’s Horizon 2020 research and innovation programme under grant agreement No 644874.
 
