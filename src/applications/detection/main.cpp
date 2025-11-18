@@ -19,7 +19,6 @@
 #include <boost/algorithm/string/case_conv.hpp>
 #include <boost/archive/xml_iarchive.hpp>
 #include <boost/archive/xml_oarchive.hpp>
-#include <boost/exception/all.hpp>
 #include <boost/filesystem.hpp>
 #include <boost/ptr_container/ptr_list.hpp>
 #include <boost/timer/timer.hpp>
