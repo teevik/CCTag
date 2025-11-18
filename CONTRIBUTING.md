@@ -1,19 +1,16 @@
-Contributing to CCTag
-===========================
+# Contributing to CCTag
 
 CCTag relies on a friendly and community-driven effort to create an open source photogrammetry solution.
 In order to foster a friendly atmosphere where technical collaboration can flourish,
 we recommend you to read the [code of conduct](CODE_OF_CONDUCT.md).
 
-
-Contributing Workflow
----------------------
+## Contributing Workflow
 
 The contributing workflow relies on [Github Pull Requests](https://help.github.com/articles/using-pull-requests/).
 
-1. If it is an important change, we recommend you to discuss it on the mailing-list before starting implementation. 
+1. If it is an important change, we recommend you to discuss it on the mailing-list before starting implementation.
   This ensure that the development is aligned with other
-developpements already started and will be efficiently integrated.
+development already started and will be efficiently integrated.
 
 2. Create the corresponding issues.
 
@@ -32,4 +29,3 @@ congratulate the author, etc. using the github comments.
 will merge your fixes into the "develop" branch.
 
 8. If not already the case, your name will be added to the [contributors list](CONTRIBUTORS.md).
-
