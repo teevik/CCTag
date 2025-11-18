@@ -178,7 +178,6 @@ if(CCTAG_WITH_CUDA)
                        Boost::serialization 
                        Boost::filesystem 
                        Boost::timer
-#          Boost::math_c99
                        Eigen3::Eigen
                        TBB::tbb
                        ${CUDA_CUDADEVRT_LIBRARY})
@@ -228,7 +227,6 @@ else() # without CUDA
                           Boost::filesystem
                           Boost::serialization 
                           Boost::timer
-#          Boost::math_c99
                         PRIVATE
                           TBB::tbb)
 
