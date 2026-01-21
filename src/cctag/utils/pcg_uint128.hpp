@@ -72,8 +72,10 @@
     #elif __powerpc__ || __POWERPC__ || __ppc__ || __PPC__ \
           || __m68k__ || __mc68000__
         #define PCG_LITTLE_ENDIAN 0
+    #elif _M_ARM || _M_ARM64 || _M_ARM64EC  // MSVC ARM Support
+        #define PCG_LITTLE_ENDIAN 1
     #else
-        #error Unable to determine target endianness
+        #error Unable to determine target endianness, please file a bug report
     #endif
 #endif
 
