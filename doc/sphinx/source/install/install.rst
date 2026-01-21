@@ -120,7 +120,6 @@ To install the dependencies:
           boost-container
           boost-date-time
           boost-exception
-          boost-foreach
           boost-filesystem
           boost-iterator
           boost-lexical-cast

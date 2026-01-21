@@ -26,7 +26,6 @@
 #include <boost/accumulators/statistics/median.hpp>
 #include <boost/accumulators/statistics/variance.hpp>
 #include <boost/assert.hpp>
-#include <boost/foreach.hpp>
 
 #include <cmath>
 #include <mutex>
@@ -167,13 +166,10 @@ bool orazioDistanceRobust(
       assert( sortedId.size() > 0 );
   #endif // GRIFF_DEBUG
       int k = 0;
-      BOOST_REVERSE_FOREACH( const MapT::const_iterator::value_type & v, sortedId )
+      for( auto riter = sortedId.crbegin(); riter != sortedId.crend(); ++riter )
       {
         if( k >= sizeIds ) break;
-        std::pair< MarkerID, float > markerId;
-        markerId.first = v.second;
-        markerId.second = v.first;
-        idSet.push_back(markerId);
+        idSet.emplace_back(riter->second, riter->first);
         ++k;
       }
 
