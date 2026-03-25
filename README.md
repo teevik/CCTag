@@ -1,6 +1,6 @@
 # CCTag library
 
-[![CII Best Practices](https://bestpractices.coreinfrastructure.org/projects/3989/badge)](https://bestpractices.coreinfrastructure.org/projects/3989) 
+[![CII Best Practices](https://bestpractices.coreinfrastructure.org/projects/3989/badge)](https://bestpractices.coreinfrastructure.org/projects/3989)
 [![Codacy Badge](https://app.codacy.com/project/badge/Grade/5b8f7ee0d05b4c8fb5e6d6602e011217)](https://app.codacy.com/gh/alicevision/CCTag/dashboard?utm_source=gh&utm_medium=referral&utm_content=&utm_campaign=Badge_grade)
 [![Continuous Integration](https://github.com/alicevision/CCTag/actions/workflows/continuous-integration.yml/badge.svg)](https://github.com/alicevision/CCTag/actions/workflows/continuous-integration.yml)
 
