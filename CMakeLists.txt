@@ -111,7 +111,9 @@ if(APPLE)
 endif(APPLE)
 
 # FIND BOOST
-set(BOOST_REQUIRED_COMPONENTS "atomic;chrono;date_time;filesystem;program_options;serialization;system;thread;timer;math_c99")
+# list only components that are not header-only, those have a target associated
+# the header-only components must be added with target_include_directories( ... ${Boost_INCLUDE_DIRS} )
+set(BOOST_REQUIRED_COMPONENTS "date_time;filesystem;program_options;serialization;timer")
 if(WIN32)
   set(BOOST_REQUIRED_COMPONENTS "${BOOST_REQUIRED_COMPONENTS};stacktrace_windbg")
 else()

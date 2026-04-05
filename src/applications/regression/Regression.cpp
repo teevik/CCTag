@@ -27,7 +27,7 @@ TestRunner::TestRunner(const std::string& inputDir, const std::string& outputDir
 
 void TestRunner::adjustParameters(cctag::Parameters& parameters)
 {
-  if (_useCuda)
+  if (_useCuda.has_value())
     parameters._useCuda = *_useCuda;
 }
 
