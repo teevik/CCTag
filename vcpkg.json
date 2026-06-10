@@ -21,6 +21,12 @@
     "boost-foreach",
     "boost-iterator",
     "boost-lexical-cast",
+    {
+      "name": "boost-math",
+      "features": [
+        "legacy"
+      ]
+    },
     "boost-mpl",
     "boost-multi-array",
     "boost-program-options",
