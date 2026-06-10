@@ -1,0 +1,41 @@
+{
+  "$schema": "https://raw.githubusercontent.com/microsoft/vcpkg-tool/main/docs/vcpkg.schema.json",
+  "name": "cctag",
+  "maintainers": "alicevision-team@googlegroups.com",
+  "description": "Computer vision library for detecting CCTag markers made up of concentric circles",
+  "homepage": "https://github.com/alicevision/CCTag",
+  "builtin-baseline": "f3e10653cc27d62a37a3763cd84b38bca07c6075",
+  "documentation": "https://cctag.readthedocs.io/",
+  "license": "MPL-2.0",
+  "dependencies": [
+    "boost-accumulators",
+    "boost-algorithm",
+    {
+      "name": "boost-config",
+      "version>=": "1.91.0"
+    },
+    "boost-container",
+    "boost-date-time",
+    "boost-exception",
+    "boost-filesystem",
+    "boost-foreach",
+    "boost-iterator",
+    "boost-lexical-cast",
+    "boost-mpl",
+    "boost-multi-array",
+    "boost-program-options",
+    "boost-ptr-container",
+    "boost-serialization",
+    "boost-spirit",
+    "boost-stacktrace",
+    "boost-test",
+    "boost-thread",
+    "boost-throw-exception",
+    "boost-timer",
+    "boost-type-traits",
+    "boost-unordered",
+    "eigen3",
+    "opencv",
+    "tbb"
+  ]
+}
