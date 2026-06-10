@@ -107,7 +107,6 @@ jobs:
           boost-date-time
           boost-exception
           boost-filesystem
-          boost-foreach
           boost-iterator
           boost-lexical-cast
           boost-math[legacy]
