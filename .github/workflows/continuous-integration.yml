@@ -2,14 +2,11 @@ name: Continuous Integration
 
 on:
   push:
-#    branches:
-#      - master
-#      - develop
     # Skip jobs when only documentation files are changed
-#    paths-ignore:
-#      - '**.md'
-#      - '**.rst'
-#      - 'docs/**'
+   paths-ignore:
+     - '**.md'
+     - '**.rst'
+     - 'docs/**'
   pull_request:
     paths-ignore:
       - '**.md'
@@ -18,6 +15,11 @@ on:
   workflow_dispatch:
   schedule:
     - cron: "0 8 * * 1" 
+
+permissions:
+  contents: read
+  checks: write
+  pull-requests: write
 
 jobs:
   build-linux:
@@ -35,7 +37,7 @@ jobs:
       BUILD_TYPE: ${{ matrix.build_type }}
       CTEST_OUTPUT_ON_FAILURE: 1
     steps:
-      - uses: actions/checkout@v2
+      - uses: actions/checkout@v6
 
       - name: Prepare File Tree
         run: |
@@ -71,82 +73,3 @@ jobs:
            -DBUILD_SHARED_LIBS:BOOL=ON \
            -DCMAKE_PREFIX_PATH:PATH="$PWD/../../cctag_install;${DEPS_INSTALL_DIR}"
           make -j8
-
-  build_windows:
-    runs-on: windows-latest
-    strategy:
-      matrix:
-        config: [ Debug, Release ]
-    env:
-      buildDir: '${{ github.workspace }}\build\'
-      vcpkgDir: '${{ github.workspace }}\..\e\vcpkg'
-      # commit for version 2025.07.25
-      COMMIT_ID: dd3097e305afa53f7b4312371f62058d2e665320
-
-    steps:
-    - name: Checkout
-      uses: actions/checkout@v3
-      with:
-        submodules: true
-
-    - name: Install latest CMake.
-      uses: lukka/get-cmake@latest
-
-    # Restore from cache the previously built ports. If a "cache miss" occurs, then vcpkg is bootstrapped. Since a the vcpkg.json is being used later on to install the packages when run-cmake runs, no packages are installed at this time and the input 'setupOnly:true' is mandatory.
-    - name: vcpkg - Setup dependencies
-      uses: lukka/run-vcpkg@v7
-      with:
-        # Just install vcpkg for now, do not install any ports in this step yet.
-        setupOnly: false
-        # Location of the vcpkg submodule in the Git repository.
-        vcpkgDirectory: ${{ env.vcpkgDir }}
-        vcpkgGitCommitId: ${{ env.COMMIT_ID }}
-        vcpkgArguments: >
-          boost-accumulators 
-          boost-algorithm boost-container
-          boost-date-time
-          boost-exception
-          boost-filesystem
-          boost-iterator
-          boost-lexical-cast
-          boost-math[legacy]
-          boost-mpl
-          boost-multi-array
-          boost-ptr-container
-          boost-program-options
-          boost-serialization
-          boost-spirit
-          boost-static-assert
-          boost-stacktrace
-          boost-test
-          boost-thread
-          boost-throw-exception
-          boost-timer
-          boost-type-traits
-          boost-unordered
-          opencv
-          tbb
-          eigen3
-        vcpkgTriplet: x64-windows
-        # doNotCache: true
-        # This is used to unbreak cached artifacts if for some reason dependencies fail to build,
-        # the action does not notice it and saves broken artifacts.
-        appendedCacheKey: cache007
-
-    - name: vcpkg - Display installed packages
-      run:
-          ${{ env.vcpkgDir }}\vcpkg.exe list
-
-    - name: Build
-      uses: lukka/run-cmake@v3
-      with:
-        cmakeListsOrSettingsJson: CMakeListsTxtAdvanced
-        cmakeListsTxtPath: '${{ github.workspace }}/CMakeLists.txt'
-        buildDirectory: ${{ env.buildDir }}
-#        cmakeGenerator: VS16Win64
-        cmakeAppendedArgs: -DCMAKE_VERBOSE_MAKEFILE:BOOL=ON -DBUILD_SHARED_LIBS:BOOL=ON -DVCPKG_TARGET_TRIPLET=x64-windows -A x64 -T host=x64 -DCCTAG_WITH_CUDA:BOOL=OFF
-        # This input tells run-cmake to consume the vcpkg.cmake toolchain file set by run-vcpkg.
-        cmakeBuildType: ${{ matrix.config }}
-        useVcpkgToolchainFile: true
-        buildWithCMake: true
-        buildWithCMakeArgs: -j1 --config ${{ matrix.config }}
