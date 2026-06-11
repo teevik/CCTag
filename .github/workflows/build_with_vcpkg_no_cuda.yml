@@ -25,12 +25,13 @@ env:
 
 jobs:
   build:
-    name: ${{ matrix.os }}
+    name: ${{ matrix.os }} (${{ matrix.config }})
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
         os: [windows-latest]
+        config: [release, debug]
 
     steps:
     - name: Checkout repository
@@ -52,18 +53,10 @@ jobs:
       # vcpkgGitCommitId is intentionally omitted: run-vcpkg reads the commit
       # hash from the builtin-baseline field in vcpkg.json automatically.
 
-    - name: Build (Release)
+    - name: Build (${{ matrix.config }})
       uses: lukka/run-cmake@v10
       with:
-        configurePreset: 'vcpkg-release'
+        configurePreset: 'vcpkg-${{ matrix.config }}'
         configurePresetAdditionalArgs: "['-DCCTAG_WITH_CUDA:BOOL=OFF']"
-        buildPreset: 'vcpkg-release'
-        testPreset: 'vcpkg-release'
-
-    - name: Build (Debug)
-      uses: lukka/run-cmake@v10
-      with:
-        configurePreset: 'vcpkg-debug'
-        configurePresetAdditionalArgs: "['-DCCTAG_WITH_CUDA:BOOL=OFF']"
-        buildPreset: 'vcpkg-debug'
-        testPreset: 'vcpkg-debug'
+        buildPreset: 'vcpkg-${{ matrix.config }}'
+        testPreset: 'vcpkg-${{ matrix.config }}'
