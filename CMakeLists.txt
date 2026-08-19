@@ -148,8 +148,9 @@ if(CCTAG_WITH_CUDA)
     set(CUDA_cudart_static_LIBRARY 0)
   else()
     message(STATUS "BUILD_SHARED_LIBS OFF")
+    # Default to the static runtime for static builds, but let the user opt out
+    # (a static libCCTag.a linked into a shared library wants the shared cudart).
     option(CUDA_USE_STATIC_CUDA_RUNTIME "Use the static version of the CUDA runtime library if available" ON)
-    set(CUDA_USE_STATIC_CUDA_RUNTIME ON)
   endif()
 
   find_package(CUDA ${CCTAG_MIN_CUDA_VERSION} REQUIRED)

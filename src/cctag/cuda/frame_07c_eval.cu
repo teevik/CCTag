@@ -129,7 +129,7 @@ void count_winners( FrameMetaPtr&                   meta,
  * inner_points is a list of indices into that list, containing the sorted,
  * unique indices of chosen inner points.
  */
-__global__
+__global__ __launch_bounds__(1024)
 void eval_chosen( FrameMetaPtr             meta,
                   DevEdgeList<TriplePoint> voters,       // input-output
                   const float*             chosen_flow_length, // input

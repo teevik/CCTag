@@ -170,6 +170,8 @@ if(CCTAG_WITH_CUDA)
           "${CMAKE_SOURCE_DIR}/src")
 
   CUDA_ADD_LIBRARY(CCTag ${CUDA_cpp} ${CUDA_cu} ${CCTag_cpp})
+  # CCTAG_WITH_CUDA changes class layouts, so consumers must see it too
+  target_compile_definitions(CCTag PUBLIC CCTAG_WITH_CUDA)
 
   # since we used CUDA_ADD_LIBRARY we cannot use PUBLIC or PRIVATE here
   target_link_libraries(CCTag
@@ -198,7 +200,7 @@ if(CCTAG_WITH_CUDA)
   # This is necessary for the CCTagConfig.cmake to correctly export the
   # includes, always because we used CUDA_ADD_LIBRARY
   set_target_properties(CCTag PROPERTIES INTERFACE_INCLUDE_DIRECTORIES
-      "$<BUILD_INTERFACE:${CMAKE_CURRENT_LIST_DIR}>;$<BUILD_INTERFACE:${generated_dir}>;$<BUILD_INTERFACE:${CUDA_INCLUDE_DIRS}>;$<INSTALL_INTERFACE:$<INSTALL_PREFIX>/include>")
+      "$<BUILD_INTERFACE:${CMAKE_CURRENT_LIST_DIR}>;$<BUILD_INTERFACE:${generated_dir}>;$<BUILD_INTERFACE:${CUDA_INCLUDE_DIRS}>;$<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>")
   # Just for testing
 #  get_target_property(testprop CCTag INTERFACE_INCLUDE_DIRECTORIES )
 #  message(STATUS "testprop: ${testprop}")
@@ -212,7 +214,7 @@ else() # without CUDA
   target_include_directories(CCTag
                            PUBLIC "$<BUILD_INTERFACE:${CMAKE_CURRENT_LIST_DIR}>"
                                   "$<BUILD_INTERFACE:${generated_dir}>"
-                "$<INSTALL_INTERFACE:$<INSTALL_PREFIX>/${CMAKE_INSTALL_INCLUDEDIR}>")
+                "$<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>")
 
   # just for testing
 #  get_target_property(testprop CCTag INTERFACE_INCLUDE_DIRECTORIES )
