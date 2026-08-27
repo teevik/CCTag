@@ -75,17 +75,18 @@ void cctagDetection(
       const cv::Mat & graySrc,
       const cctag::Parameters & params,
       logtime::Mgmt* durations,
-      const CCTagMarkersBank * pBank)
+      const CCTagMarkersBank * pBank,
+      Probe* probe)
 {
   boost::ptr_list<cctag::CCTag> cctags;
   
   if ( pBank == nullptr)
   {
     CCTagMarkersBank bank(params._nCrowns);
-    cctag::cctagDetection(cctags, pipeId, frame, graySrc, params, bank, false, durations);
+    cctag::cctagDetection(cctags, pipeId, frame, graySrc, params, bank, false, durations, probe);
   }else
   {
-    cctag::cctagDetection(cctags, pipeId, frame, graySrc, params, *pBank, false, durations);
+    cctag::cctagDetection(cctags, pipeId, frame, graySrc, params, *pBank, false, durations, probe);
   }
   
   markers.clear();
@@ -97,4 +98,3 @@ void cctagDetection(
 
 
 }
-

@@ -14,6 +14,8 @@
 #include <cctag/Fitting.hpp>
 #include <cctag/Canny.hpp>
 #include <cctag/Detection.hpp>
+#include <cctag/Probe.hpp>
+#include <cctag/ProbeLegacy.hpp>
 #include <cctag/utils/Talk.hpp> // for DO_TALK macro
 
 #include <boost/timer/timer.hpp>
@@ -201,7 +203,8 @@ static void cctagMultiresDetection_inner(
         EdgePointCollection&    edgeCollection,
         cctag::TagPipe*        cuda_pipe,
         const Parameters &      params,
-        cctag::logtime::Mgmt*   durations )
+        cctag::logtime::Mgmt*   durations,
+        Probe*                  probe )
 {
     DO_TALK( CCTAG_COUT_OPTIM(":::::::: Multiresolution level " << i << "::::::::"); )
 
@@ -222,6 +225,7 @@ static void cctagMultiresDetection_inner(
       CCTagVisualDebug::instance().setPyramidLevel(i);
     } else { // not cuda_pipe
 #endif // defined(CCTAG_WITH_CUDA)
+    if (probe) probe->enter("vote");
     edgesPointsFromCanny( edgeCollection,
                           level->getEdges(),
                           level->getDx(),
@@ -240,6 +244,8 @@ static void cctagMultiresDetection_inner(
         // Sort the seeds based on the number of received votes.
         std::sort(seeds.begin(), seeds.end(), receivedMoreVoteThan);
     }
+    if (probe) probe->leave("vote");
+    if (probe) probeEdgePointsAndVote(probe, static_cast<std::uint32_t>(i), edgeCollection, seeds);
 
 #if defined(CCTAG_WITH_CUDA)
     } // not cuda_pipe
@@ -252,7 +258,7 @@ static void cctagMultiresDetection_inner(
         level->getSrc(),
         seeds,
         frame, i, std::pow(2.0, (int) i), params,
-        durations );
+        durations, probe );
 
     CCTagVisualDebug::instance().initBackgroundImage(level->getSrc());
     std::stringstream outFilename2;
@@ -272,7 +278,8 @@ void cctagMultiresDetection(
         std::size_t   frame,
         cctag::TagPipe*    cuda_pipe,
         const Parameters&   params,
-        cctag::logtime::Mgmt* durations )
+        cctag::logtime::Mgmt* durations,
+        Probe* probe )
 {
   //	* For each pyramid level:
   //	** launch CCTag detection based on the canny edge detection output.
@@ -299,7 +306,8 @@ void cctagMultiresDetection(
                                   *vEdgePointCollections[i],
                                   cuda_pipe,
                                   params,
-                                  durations );
+                                  durations,
+                                  probe );
 
     // Gather the detected markers in the entire image pyramid
     for(const CCTag & marker : pyramidMarkers)
@@ -316,6 +324,7 @@ void cctagMultiresDetection(
   CCTagVisualDebug::instance().newSession("multiresolution");
 
   // Project markers from the top of the pyramid to the bottom (original image).
+  if (probe) probe->enter("candidates");
   for(CCTag & marker : markers)
   {
     int i = marker.pyramidLevel();
@@ -399,6 +408,7 @@ void cctagMultiresDetection(
       marker.setRescaledOuterEllipsePoints(marker.points().back());
     }
   }
+  if (probe) probe->leave("candidates");
   if( durations ) durations->log( "after marker projection" );
 
   // Log
@@ -413,4 +423,3 @@ void cctagMultiresDetection(
 }
 
 } // namespace cctag
-

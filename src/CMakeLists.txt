@@ -2,6 +2,8 @@
 # build directory containing the generated files
 set(generated_dir "${CMAKE_CURRENT_BINARY_DIR}/generated")
 
+if(CCTAG_PIPELINE STREQUAL "legacy")
+
 set( CCTag_cpp
         ./cctag/Bresenham.cpp
         ./cctag/CCTag.cpp
@@ -20,6 +22,7 @@ set( CCTag_cpp
         ./cctag/Level.cpp
         ./cctag/Multiresolution.cpp
         ./cctag/Params.cpp
+        ./cctag/ProbeLegacy.cpp
         ./cctag/Statistic.cpp
         ./cctag/SubPixEdgeOptimizer.cpp
         ./cctag/Types.cpp
@@ -57,6 +60,8 @@ set( CCTag_HEADERS
         ./cctag/Level.hpp
         ./cctag/Multiresolution.hpp
         ./cctag/Params.hpp
+        ./cctag/Probe.hpp
+        ./cctag/ProbeLegacy.hpp
         ./cctag/Statistic.hpp
         ./cctag/SubPixEdgeOptimizer.hpp
         ./cctag/Types.hpp
@@ -237,6 +242,21 @@ else() # without CUDA
 
 endif()
 
+else()
+
+  set(CCTag_HEADERS
+        ./cctag/ICCTag.hpp
+        ./cctag/Params.hpp
+        ./cctag/CCTagMarkersBank.hpp
+        ./cctag/Probe.hpp
+        ./cctag/geometry/Ellipse.hpp
+        ./cctag/geometry/Point.hpp
+        ./cctag/utils/Exceptions.hpp)
+  set(CUDA_HEADERS "")
+  add_subdirectory(${PROJECT_SOURCE_DIR}/portable ${CMAKE_CURRENT_BINARY_DIR}/portable)
+
+endif()
+
 if("${CMAKE_CXX_COMPILER_ID}" STREQUAL "MSVC")
   target_compile_definitions(CCTag PUBLIC "-DNOMINMAX")
 endif()
@@ -347,11 +367,11 @@ install(EXPORT "${targets_export_name}"
 # Generate ${PROJECT_NAME}Targets.cmake in the build directory to use the library without installing it
 export(TARGETS CCTag FILE "${generated_dir}/${targets_export_name}.cmake")
 
-if(CCTAG_BUILD_APPS)
+if(CCTAG_BUILD_APPS AND CCTAG_PIPELINE STREQUAL "legacy")
   add_subdirectory(applications)
 endif()
 
-if(CCTAG_BUILD_TESTS)
+if(CCTAG_BUILD_TESTS AND CCTAG_PIPELINE STREQUAL "legacy")
     add_subdirectory(cctag/test)
     add_subdirectory(cctag/geometry/test)
 endif()

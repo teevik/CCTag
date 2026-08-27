@@ -8,6 +8,8 @@
 
 #pragma once
 
+#define CCTAG_PIPELINE_NAME "@CCTAG_PIPELINE@"
+
 #ifndef CCTAG_SERIALIZE
 #cmakedefine CCTAG_SERIALIZE
 #endif

@@ -19,6 +19,8 @@
 #include <cctag/geometry/EllipseFromPoints.hpp>
 #include <cctag/CCTag.hpp>
 #include <cctag/Identification.hpp>
+#include <cctag/Probe.hpp>
+#include <cctag/ProbeLegacy.hpp>
 #include <cctag/Fitting.hpp>
 #include <cctag/Types.hpp>
 #include <cctag/Canny.hpp>
@@ -573,7 +575,8 @@ void cctagDetectionFromEdges(
         int pyramidLevel,
         float scale,
         const Parameters & providedParams,
-        cctag::logtime::Mgmt* durations )
+        cctag::logtime::Mgmt* durations,
+        Probe* probe )
 {
   const Parameters& params = Parameters::OverrideLoaded ?
     Parameters::Override : providedParams;
@@ -593,9 +596,14 @@ void cctagDetectionFromEdges(
   CCTagFileDebug::instance().newSession(outFlowComponents.str());
 #endif
 
+  std::vector<CandidatePtr> vCandidateLoopOne;
+
   if( seeds.size() <= 0 )
   {
     // No seeds to process
+    if (probe) probe->enter("linking");
+    if (probe) probe->leave("linking");
+    if (probe) probeLinking(probe, static_cast<std::uint32_t>(pyramidLevel), edgeCollection, vCandidateLoopOne);
     return;
   }
 
@@ -603,14 +611,13 @@ void cctagDetectionFromEdges(
   
   const std::size_t nSeedsToProcess = std::min(seeds.size(), nMaximumNbSeeds);
 
-  std::vector<CandidatePtr> vCandidateLoopOne;
-
   // Process all the first-nSeedsToProcess seeds.
   // In the following loop, a seed will lead to a flow component if it lies
   // on the inner ellipse of a CCTag.
   // The edge points lying on the inner ellipse and their voters (lying on the outer ellipse)
   // will be collected and constitute the initial data of a flow component.
   
+  if (probe) probe->enter("linking");
 #ifndef CCTAG_SERIALIZE
   tbb::parallel_for(size_t(0), nSeedsToProcess, [&](int iSeed) {
 #else 
@@ -624,6 +631,10 @@ void cctagDetectionFromEdges(
 #else
   }
 #endif
+
+  if (probe) probe->leave("linking");
+  if (probe) probeLinking(probe, static_cast<std::uint32_t>(pyramidLevel), edgeCollection, vCandidateLoopOne);
+  if (probe) probe->enter("candidates");
 
   const std::size_t nFlowComponentToProcessLoopTwo = 
           std::min(vCandidateLoopOne.size(), params._maximumNbCandidatesLoopTwo);
@@ -689,6 +700,7 @@ void cctagDetectionFromEdges(
   boost::posix_time::ptime tstop2(boost::posix_time::microsec_clock::local_time());
   boost::posix_time::time_duration d2 = tstop2 - tstop1;
   const float spendTime2 = d2.total_milliseconds();
+  if (probe) probe->leave("candidates");
 }
 
 
@@ -777,7 +789,8 @@ void cctagDetection(
         const Parameters & providedParams,
         const cctag::CCTagMarkersBank & bank,
         bool bDisplayEllipses,
-        cctag::logtime::Mgmt* durations )
+        cctag::logtime::Mgmt* durations,
+        Probe* probe )
 
 {
     using namespace cctag;
@@ -829,14 +842,21 @@ void cctagDetection(
     } else { // not params.useCuda
 #endif // CCTAG_WITH_CUDA
 
+        if (probe) probe->enter("pyramid");
         imagePyramid.build( imgGraySrc,
                             params._cannyThrLow,
                             params._cannyThrHigh,
                             &params );
+        if (probe) probe->leave("pyramid");
+        if (probe) probePyramid(probe, imagePyramid);
 
 #ifdef CCTAG_WITH_CUDA
     } // not params.useCuda
 #endif // CCTAG_WITH_CUDA
+
+#ifdef CCTAG_WITH_CUDA
+    if(pipe1) probe = nullptr; // Legacy CUDA stage data is not probed in v1.
+#endif
   
     if( durations ) durations->log( "before cctagMultiresDetection" );
 
@@ -846,9 +866,11 @@ void cctagDetection(
                             frame,
                             pipe1,
                             params,
-                            durations );
+                            durations,
+                            probe );
 
     if( durations ) durations->log( "after cctagMultiresDetection" );
+    if (probe) probeCandidates(probe, markers);
 
 #ifdef CCTAG_WITH_CUDA
     if( pipe1 ) {
@@ -871,6 +893,7 @@ void cctagDetection(
     // Identification step
     if (params._doIdentification)
     {
+      if (probe) probe->enter("identification");
       CCTagVisualDebug::instance().resetMarkerIndex();
 
         const std::size_t numTags  = markers.size();
@@ -961,6 +984,7 @@ void cctagDetection(
             tagIndex++;
         }
         if( durations ) durations->log( "after cctag::identification::identify" );
+        if (probe) probe->leave("identification");
     }
 
 #ifdef CCTAG_WITH_CUDA
@@ -986,6 +1010,7 @@ void cctagDetection(
     markers = markersFinal;
   
     markers.sort();
+    if (probe) probeMarkers(probe, markers);
 
     CCTagVisualDebug::instance().initBackgroundImage(imagePyramid.getLevel(0)->getSrc());
     CCTagVisualDebug::instance().writeIdentificationView(markers);

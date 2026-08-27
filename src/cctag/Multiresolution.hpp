@@ -24,6 +24,8 @@
 
 namespace cctag {
 
+class Probe;
+
 struct CCTagParams
 {
 };
@@ -44,7 +46,8 @@ void cctagMultiresDetection(
         std::size_t   frame,
         cctag::TagPipe*    cuda_pipe,
         const Parameters&   params,
-        cctag::logtime::Mgmt* durations );
+        cctag::logtime::Mgmt* durations,
+        Probe* probe = nullptr );
 
 void update(CCTag::List& markers, const CCTag& markerToAdd);
 
@@ -52,4 +55,3 @@ void update(CCTag::List& markers, const CCTag& markerToAdd);
 
 
 #endif
-

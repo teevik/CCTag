@@ -24,6 +24,7 @@ namespace cctag {
 
 class EdgePoint;
 class EdgePointImage;
+class Probe;
 
 /**
  * @brief Perform the CCTag detection on a gray scale image. Cf. application/detection/main.cpp for example of usage.
@@ -45,7 +46,8 @@ void cctagDetection(CCTag::List& markers,
                     const Parameters& providedParams,
                     const cctag::CCTagMarkersBank& bank,
                     bool bDisplayEllipses = true,
-                    logtime::Mgmt* durations = nullptr);
+                    logtime::Mgmt* durations = nullptr,
+                    Probe* probe = nullptr);
 
 void cctagDetectionFromEdges(CCTag::List& markers,
                              EdgePointCollection& edgeCollection,
@@ -55,11 +57,11 @@ void cctagDetectionFromEdges(CCTag::List& markers,
                              int pyramidLevel,
                              float scale,
                              const Parameters& providedParams,
-                             logtime::Mgmt* durations);
+                             logtime::Mgmt* durations,
+                             Probe* probe = nullptr);
 
 void createImageForVoteResultDebug(const cv::Mat& src, std::size_t nLevel);
 
 } // namespace cctag
 
 #endif
-
