@@ -1,0 +1,72 @@
+Language: Cpp
+Standard: c++20
+
+ColumnLimit: 100
+IndentWidth: 4
+ContinuationIndentWidth: 4
+UseTab: Never
+
+# Braces on the same line, always present
+BreakBeforeBraces: Attach
+InsertBraces: true
+SpaceBeforeParens: ControlStatements
+
+# Block indent instead of hanging alignment, one item per line on overflow
+AlignAfterOpenBracket: BlockIndent
+BinPackArguments: false
+BinPackParameters: OnePerLine
+AllowAllArgumentsOnNextLine: false
+AllowAllParametersOfDeclarationOnNextLine: false
+AlignOperands: DontAlign
+BreakBeforeBinaryOperators: NonAssignment
+BreakBeforeTernaryOperators: true
+
+# Nothing collapsed onto one line except empty bodies / small lambdas
+AllowShortFunctionsOnASingleLine: Empty
+AllowShortBlocksOnASingleLine: Empty
+AllowShortIfStatementsOnASingleLine: Never
+AllowShortLoopsOnASingleLine: false
+AllowShortCaseLabelsOnASingleLine: false
+AllowShortLambdasOnASingleLine: All
+AllowShortEnumsOnASingleLine: false
+
+# No column alignment
+AlignConsecutiveAssignments: None
+AlignConsecutiveDeclarations: None
+AlignTrailingComments:
+  Kind: Never
+AlignEscapedNewlines: DontAlign
+
+# Declarations
+PointerAlignment: Left
+QualifierAlignment: Left
+BreakTemplateDeclarations: Yes
+RequiresClausePosition: OwnLine
+BreakConstructorInitializers: AfterColon
+PackConstructorInitializers: Never
+LambdaBodyIndentation: OuterScope
+IndentCaseLabels: true
+Cpp11BracedListStyle: true
+NamespaceIndentation: None
+FixNamespaceComments: true
+
+# Whitespace hygiene
+MaxEmptyLinesToKeep: 1
+KeepEmptyLinesAtTheStartOfBlocks: false
+InsertNewlineAtEOF: true
+ReflowComments: true
+
+# Includes: sorted and grouped
+SortIncludes: CaseSensitive
+IncludeBlocks: Regroup
+IncludeCategories:
+  - Regex: '^"'
+    Priority: 1
+  - Regex: "^<cctag/"
+    Priority: 2
+  - Regex: "^<(Eigen|opencv|boost)/"
+    Priority: 3
+  - Regex: '^<.*\.'
+    Priority: 4
+  - Regex: "^<"
+    Priority: 5

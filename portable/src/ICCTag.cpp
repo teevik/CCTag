@@ -9,15 +9,16 @@
 
 namespace cctag {
 
-void cctagDetection(boost::ptr_list<ICCTag>& markers,
-                    int pipeId,
-                    std::size_t frame,
-                    const cv::Mat& graySrc,
-                    std::size_t nRings,
-                    logtime::Mgmt* durations,
-                    const std::string& parameterFile,
-                    const std::string& cctagBankFilename)
-{
+void cctagDetection(
+    boost::ptr_list<ICCTag>& markers,
+    int pipeId,
+    std::size_t frame,
+    const cv::Mat& graySrc,
+    std::size_t nRings,
+    logtime::Mgmt* durations,
+    const std::string& parameterFile,
+    const std::string& cctagBankFilename
+) {
     (void)pipeId;
     (void)frame;
     (void)graySrc;
@@ -28,15 +29,16 @@ void cctagDetection(boost::ptr_list<ICCTag>& markers,
     markers.clear();
 }
 
-void cctagDetection(boost::ptr_list<ICCTag>& markers,
-                    int pipeId,
-                    std::size_t frame,
-                    const cv::Mat& graySrc,
-                    const Parameters& params,
-                    logtime::Mgmt* durations,
-                    const CCTagMarkersBank* pBank,
-                    Probe* probe)
-{
+void cctagDetection(
+    boost::ptr_list<ICCTag>& markers,
+    int pipeId,
+    std::size_t frame,
+    const cv::Mat& graySrc,
+    const Parameters& params,
+    logtime::Mgmt* durations,
+    const CCTagMarkersBank* pBank,
+    Probe* probe
+) {
     (void)pipeId;
     (void)frame;
     (void)graySrc;

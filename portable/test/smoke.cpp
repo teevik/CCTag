@@ -9,15 +9,15 @@
 
 #include <cstdlib>
 
-int main()
-{
+int main() {
     boost::ptr_list<cctag::ICCTag> detections;
     const cv::Mat image;
 
     cctag::Parameters parameters(3);
     cctag::cctagDetection(detections, 0, 0, image, parameters);
-    if(!detections.empty())
+    if (!detections.empty()) {
         return EXIT_FAILURE;
+    }
 
     cctag::cctagDetection(detections, 0, 0, image, 3);
     return detections.empty() ? EXIT_SUCCESS : EXIT_FAILURE;
