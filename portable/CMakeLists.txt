@@ -86,4 +86,17 @@ if(CCTAG_BUILD_TESTS)
     target_compile_definitions(portable_seam PRIVATE CCTAG_PORTABLE_PARALLEL=1)
     target_link_libraries(portable_seam OpenMP::OpenMP_CXX)
   endif()
+
+  # Stage isolation: the reference-snapshot loader (host-only test support) and one test per
+  # stage function, run against $CCTAG_REFERENCE_SNAPSHOTS and skipped with a message without it.
+  add_library(cctag_portable_test_support STATIC test/reference_snapshot.cpp)
+  target_include_directories(cctag_portable_test_support
+      PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src ${CMAKE_CURRENT_SOURCE_DIR}/test)
+  target_link_libraries(cctag_portable_test_support PUBLIC CCTag)
+  set_target_properties(cctag_portable_test_support PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON CXX_EXTENSIONS OFF)
+  target_compile_options(cctag_portable_test_support PRIVATE ${PORTABLE_EXACT_FLOAT_OPTIONS})
+
+  add_boost_test(SOURCE test/stage_isolation.cpp LINK cctag_portable_test_support PREFIX portable)
+  set_target_properties(portable_stage_isolation PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON CXX_EXTENSIONS OFF)
+  target_compile_options(portable_stage_isolation PRIVATE ${PORTABLE_EXACT_FLOAT_OPTIONS})
 endif()
