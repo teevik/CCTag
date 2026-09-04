@@ -28,6 +28,14 @@ struct Buffers {
     cv::Mat1s dx;
     cv::Mat1s dy;
 
+    // A copied `cv::Mat` shares its storage; a level's buffers are owned by one context, so a
+    // copy would be an alias by accident. Movable for `std::vector`.
+    Buffers() = default;
+    Buffers(Buffers&&) = default;
+    Buffers& operator=(Buffers&&) = default;
+    Buffers(const Buffers&) = delete;
+    Buffers& operator=(const Buffers&) = delete;
+
     void ensure(std::uint32_t level_width, std::uint32_t level_height);
 
     kernels::Plane<std::uint8_t> src_plane() {

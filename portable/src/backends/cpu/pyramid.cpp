@@ -11,16 +11,14 @@
 
 #include <opencv2/imgproc.hpp>
 
+#include <algorithm>
+#include <cstdint>
+
 namespace cctag::portable::cpu {
 
 void Backend::load(Buffers& level0, kernels::Plane<const std::uint8_t> input) {
-    const cv::Mat1b view(
-        static_cast<int>(input.height),
-        static_cast<int>(input.width),
-        const_cast<std::uint8_t*>(input.data),
-        input.stride
-    );
-    view.copyTo(level0.src);
+    for (std::uint32_t y = 0; y < input.height; ++y)
+        std::copy_n(input.row(y), input.width, level0.src[static_cast<int>(y)]);
 }
 
 void Backend::pyramid(Buffers& coarser, const Buffers& finer) {

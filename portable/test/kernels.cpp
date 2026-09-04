@@ -19,6 +19,7 @@
 #include <opencv2/core.hpp>
 #include <opencv2/imgproc.hpp>
 
+#include <algorithm>
 #include <cstdint>
 
 using namespace cctag::portable;
@@ -42,7 +43,8 @@ cv::Mat1b test_image(int width, int height) {
 /// `gradient_at` against `filter2D` at every pixel of a `width` x `height` image.
 void expect_gradient_at_reproduces_filter2d(int width, int height) {
     const cv::Mat1b image = test_image(width, height);
-    const cv::Mat1f kernel_dx(9, 9, const_cast<float*>(&kernels::kDerivativeKernel[0][0]));
+    cv::Mat1f kernel_dx(9, 9);
+    std::copy_n(&kernels::kDerivativeKernel[0][0], kernel_dx.total(), kernel_dx.begin());
     const cv::Mat1f kernel_dy = kernel_dx.t();
     cv::Mat1s dx, dy;
     cv::filter2D(image, dx, CV_16SC1, kernel_dx, cv::Point{-1, -1}, 0.0, cv::BORDER_REPLICATE);

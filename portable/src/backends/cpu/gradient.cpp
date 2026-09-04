@@ -13,11 +13,20 @@
 
 #include <opencv2/imgproc.hpp>
 
+#include <algorithm>
+
 namespace cctag::portable::cpu {
 
 namespace {
 
-const cv::Mat1f kKernelDx(9, 9, const_cast<float*>(&kernels::kDerivativeKernel[0][0]));
+/// The 9x9 derivative kernel as a matrix of its own; `dy` is the transpose.
+cv::Mat1f derivative_kernel() {
+    cv::Mat1f kernel(9, 9);
+    std::copy_n(&kernels::kDerivativeKernel[0][0], kernel.total(), kernel.begin());
+    return kernel;
+}
+
+const cv::Mat1f kKernelDx = derivative_kernel();
 const cv::Mat1f kKernelDy = kKernelDx.t();
 
 } // namespace
