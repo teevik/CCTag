@@ -1,0 +1,72 @@
+/*
+ * Copyright 2026, Simula Research Laboratory
+ *
+ * This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at http://mozilla.org/MPL/2.0/.
+ */
+// Element functions against the OpenCV call they reproduce. Each element function the build lands
+// adds one case here; like every portable test, they run under the reference's OPENCV_CPU_DISABLE
+// mask (set by ctest), where OpenCV's results are the scalar ones.
+#define BOOST_TEST_MODULE testPortableKernels
+
+#define BOOST_TEST_DYN_LINK
+
+#include "kernels/gradient.hpp"
+
+#include <boost/test/unit_test.hpp>
+
+#include <opencv2/core.hpp>
+#include <opencv2/imgproc.hpp>
+
+#include <cstdint>
+
+using namespace cctag::portable;
+
+namespace {
+
+/// A deterministic, textured image; odd dimensions so no border coincides with a tap stride.
+cv::Mat1b test_image(int width, int height) {
+    cv::Mat1b image(height, width);
+    std::uint32_t state = 12345u;
+    for (int y = 0; y < height; ++y) {
+        for (int x = 0; x < width; ++x) {
+            state = state * 1664525u + 1013904223u;
+            const int ring = ((x * x + y * y) / 37) % 2 ? 200 : 40;
+            image(y, x) = static_cast<std::uint8_t>(ring + (state >> 27));
+        }
+    }
+    return image;
+}
+
+} // namespace
+
+BOOST_AUTO_TEST_SUITE(kernels_suite)
+
+BOOST_AUTO_TEST_CASE(gradient_at_reproduces_filter2d_at_every_pixel) {
+    const int width = 37, height = 23;
+    const cv::Mat1b image = test_image(width, height);
+    const cv::Mat1f kernel_dx(9, 9, const_cast<float*>(&kernels::kDerivativeKernel[0][0]));
+    const cv::Mat1f kernel_dy = kernel_dx.t();
+    cv::Mat1s dx, dy;
+    cv::filter2D(image, dx, CV_16SC1, kernel_dx, cv::Point{-1, -1}, 0.0, cv::BORDER_REPLICATE);
+    cv::filter2D(image, dy, CV_16SC1, kernel_dy, cv::Point{-1, -1}, 0.0, cv::BORDER_REPLICATE);
+
+    const std::size_t stride = image.step1();
+    for (std::uint32_t y = 0; y < static_cast<std::uint32_t>(height); ++y) {
+        for (std::uint32_t x = 0; x < static_cast<std::uint32_t>(width); ++x) {
+            BOOST_TEST_CONTEXT("pixel (" << x << ", " << y << ")") {
+                BOOST_CHECK_EQUAL(
+                    kernels::gradient_at(image[0], stride, width, height, x, y, kernels::kDxTaps),
+                    dx(static_cast<int>(y), static_cast<int>(x))
+                );
+                BOOST_CHECK_EQUAL(
+                    kernels::gradient_at(image[0], stride, width, height, x, y, kernels::kDyTaps),
+                    dy(static_cast<int>(y), static_cast<int>(x))
+                );
+            }
+        }
+    }
+}
+
+BOOST_AUTO_TEST_SUITE_END()

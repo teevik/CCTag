@@ -15,9 +15,7 @@ int main() {
 
     cctag::Parameters parameters(3);
     cctag::cctagDetection(detections, 0, 0, image, parameters);
-    if (!detections.empty()) {
-        return EXIT_FAILURE;
-    }
+    if (!detections.empty()) return EXIT_FAILURE;
 
     cctag::cctagDetection(detections, 0, 0, image, 3);
     return detections.empty() ? EXIT_SUCCESS : EXIT_FAILURE;

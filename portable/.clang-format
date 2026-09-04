@@ -6,9 +6,10 @@ IndentWidth: 4
 ContinuationIndentWidth: 4
 UseTab: Never
 
-# Braces on the same line, always present
+# Braces on the same line; simple single-statement if bodies go unbraced (Google style), and the
+# compiler's -Wmisleading-indentation is the safeguard for the unbraced form.
 BreakBeforeBraces: Attach
-InsertBraces: true
+RemoveBracesLLVM: true
 SpaceBeforeParens: ControlStatements
 
 # Block indent instead of hanging alignment, one item per line on overflow
@@ -21,10 +22,10 @@ AlignOperands: DontAlign
 BreakBeforeBinaryOperators: NonAssignment
 BreakBeforeTernaryOperators: true
 
-# Nothing collapsed onto one line except empty bodies / small lambdas
+# Nothing collapsed onto one line except empty bodies, small lambdas and `if (x) return;`
 AllowShortFunctionsOnASingleLine: Empty
 AllowShortBlocksOnASingleLine: Empty
-AllowShortIfStatementsOnASingleLine: Never
+AllowShortIfStatementsOnASingleLine: WithoutElse
 AllowShortLoopsOnASingleLine: false
 AllowShortCaseLabelsOnASingleLine: false
 AllowShortLambdasOnASingleLine: All
