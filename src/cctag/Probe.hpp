@@ -13,74 +13,74 @@
 
 namespace cctag {
 
+// Pixel data for one pyramid level. Rows may include padding.
 struct Plane
 {
     std::uint32_t width;
     std::uint32_t height;
     std::size_t stride_bytes;
-    const void* data; // U8 for source/edges, I16 for dx/dy.
+    // uint8_t for source/edge images and int16_t for dx/dy gradients.
+    const void* data;
 };
 
 struct EdgePointsView
 {
-    std::uint32_t n;        // Number of edge points.
-    const std::int32_t* xy; // [n, 2], pipeline enumeration order.
-    const float* grad;      // [n, 2], (dx, dy).
+    // Number of edge points.
+    std::uint32_t n;
+    // n (x, y) pairs, in the pipeline's edge-point order.
+    const std::int32_t* xy;
+    // n (dx, dy) pairs, in the same order as xy.
+    const float* grad;
 };
 
+// Voting results for the n points reported by edge_points at this pyramid level.
 struct VoteView
 {
-    const std::int32_t* links;          // [n, 2], -1 when absent.
-    const std::int32_t* voters_offsets; // [n + 1].
+    const std::int32_t* links; // n pairs of (before, after) point indices; -1 means no link.
+
+    // Voters for point i are stored in voters_values, from voters_offsets[i]
+    // up to (but excluding) voters_offsets[i + 1]. There are n + 1 offsets.
+    const std::int32_t* voters_offsets;
     const std::int32_t* voters_values;
-    const std::int32_t* is_max; // [n], received-vote count.
-    const float* flow_length;   // [n].
+
+    const std::int32_t* is_max; // Number of votes received by each point.
+    const float* flow_length;   // One flow length per point.
     std::uint32_t n_seeds;
-    const std::int32_t* seeds; // [n_seeds], ownership-resolution order.
+    const std::int32_t* seeds; // n_seeds point indices, in the order linking processes them.
 };
 
 struct LinkingView
 {
-    std::uint32_t c;                     // Number of candidate-marker segments.
-    const std::int32_t* seeds;           // [c].
-    const std::int32_t* segment_offsets; // [c + 1].
-    const std::int32_t* segment_values;  // Segment walk order.
-    const std::int32_t* child_counts;    // [c].
-    const float* avg_vote;               // [c].
+    std::uint32_t c;           // Number of candidate-marker segments.
+    const std::int32_t* seeds; // One seed point index per segment.
+
+    // Points in segment i are stored in segment_values, from segment_offsets[i]
+    // up to (but excluding) segment_offsets[i + 1], in the order of the segment walk.
+    const std::int32_t* segment_offsets; // c + 1 offsets.
+    const std::int32_t* segment_values;
+    const std::int32_t* child_counts; // Number of child edge points per segment.
+    const float* avg_vote;            // Voting score for each segment.
 };
 
 struct CandidatesView
 {
     std::uint32_t n;           // Number of candidate markers.
-    const float* ellipse;      // [n, 5], (cx, cy, a, b, angle), level-0 space.
-    const std::int32_t* level; // [n].
-    const float* quality;      // [n].
+    const float* ellipse;      // n (cx, cy, a, b, angle) groups, scaled to the original image.
+    const std::int32_t* level; // Pyramid level where each candidate marker was found.
+    const float* quality;      // One quality value per candidate marker.
 };
 
 struct MarkersView
 {
     std::uint32_t n;            // Number of detection candidates.
-    const float* xy;            // [n, 2].
-    const std::int32_t* id;     // [n], -1 when undefined.
-    const std::int32_t* status; // [n].
+    const float* xy;            // n (x, y) pairs.
+    const std::int32_t* id;     // One marker ID per detection candidate; -1 if unidentified.
+    const std::int32_t* status; // One identification status per detection candidate.
 };
 
 /**
- * Pipeline-neutral observation point for detection stages.
- *
- * All view pointers are valid only for the duration of their callback and
- * must be copied by an observing probe. Indices are pipeline-local positions
- * in the xy array supplied to edge_points for the same pyramid level. They
- * are deliberately not canonical indices: an observing probe canonicalises
- * them while copying the transient views.
- *
- * Callbacks are made only from sequential code and at most once for each
- * (stage, level) in one detection. All pyramid callbacks precede the processed
- * level callbacks. Within a processed level, edge_points precedes vote, which
- * precedes linking. candidates (candidate markers) follows the level loop, and
- * markers (detection candidates) follows the final marker sort. A stage is
- * present exactly when its callback was made, so a pipeline may stop at any
- * stage boundary. The legacy CUDA path does not invoke a probe in v1.
+ * Receives stage results and timing events from pipeline, must be overridden to
+ * actually observe the data, noop by default.
  */
 class Probe
 {
@@ -96,7 +96,7 @@ class Probe
     virtual void candidates(const CandidatesView&) {}
     virtual void markers(const MarkersView&) {}
 
-    // Timing is recorded in memory by interested probes, never in snapshots.
+    // enter/leave mark the start/end of a named stage's work
     virtual void enter(const char*) {}
     virtual void leave(const char*) {}
 };

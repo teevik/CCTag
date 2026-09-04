@@ -8,6 +8,7 @@
 #ifndef CCTAG_PORTABLE_BACKENDS_CPU_BACKEND_HPP
 #define CCTAG_PORTABLE_BACKENDS_CPU_BACKEND_HPP
 
+#include "host/backend.hpp"
 #include "host/context.hpp"
 #include "host/views.hpp"
 #include "kernels/plane.hpp"
@@ -18,21 +19,21 @@
 
 namespace cctag::portable::cpu {
 
-/// The stage buffers of one pyramid level, owned by the CPU backend (ADR 0002): dense OpenCV
-/// planes, sized once by `ensure` and rewritten in full every frame. Kernels see them through
-/// `kernels::Plane`. Each stage the build lands adds its storage here.
+/// Holds one pyramid level's buffers.
 struct Buffers {
     std::uint32_t width = 0;
     std::uint32_t height = 0;
+
+    /// Source grayscale image.
     cv::Mat1b src;
+    /// Horizontal gradient/derivative.
     cv::Mat1s dx;
+    /// Vertical gradient/derivative.
     cv::Mat1s dy;
 
-    // A copied `cv::Mat` shares its storage; a level's buffers are owned by one context, so a
-    // copy would be an alias by accident. Movable for `std::vector`.
     Buffers() = default;
-    Buffers(Buffers&&) = default;
-    Buffers& operator=(Buffers&&) = default;
+    Buffers(Buffers&&) noexcept = default;
+    Buffers& operator=(Buffers&&) noexcept = default;
     Buffers(const Buffers&) = delete;
     Buffers& operator=(const Buffers&) = delete;
 
@@ -49,17 +50,13 @@ struct Buffers {
     }
 };
 
-/// The CPU execution backend: the stage baseline (ADR 0001), one source file per stage. Where the
-/// legacy pipeline called an OpenCV routine the baseline calls the same one (ADR 0006); a stage
-/// is `Exact` against the reference snapshot under the same `OPENCV_CPU_DISABLE` mask the
-/// reference producer uses. Host views are zero-copy and `wait` is a no-op: every stage call is
-/// synchronous.
+/// The CPU execution backend, implementing ExecutionBackend
 struct Backend {
     using Buffers = cpu::Buffers;
 
-    /// The level-0 copy: the one place the pipeline touches foreign memory.
+    /// Copies the input image into level 0.
     static void load(Buffers& level0, kernels::Plane<const std::uint8_t> input);
-    /// `src` of `coarser` from `src` of `finer`; no host view.
+    /// `src` of `coarser` from `src` of `finer`.
     static void pyramid(Buffers& coarser, const Buffers& finer);
     /// `src` -> `dx`, `dy`.
     static void gradient(Buffers& level);
@@ -69,6 +66,8 @@ struct Backend {
 
     static void wait(Context<Backend>&) {}
 };
+
+static_assert(ExecutionBackend<Backend>);
 
 } // namespace cctag::portable::cpu
 

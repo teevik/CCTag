@@ -12,24 +12,20 @@
 #include <cstddef>
 #include <cstdint>
 
-// Element function of the `gradient` stage: OpenCV's `filter2D(src, CV_16SC1, kernel,
-// BORDER_REPLICATE)` with the fork's 9x9 derivative kernel, as traced in
-// docs/research/exact-stage-arithmetic.md §2. The 72 non-zero taps are visited in row-major order
-// of the kernel, each a float32 multiply then a float32 add — never fused (the translation unit
-// must be compiled with -ffp-contract=off) — then nearest-even rounding and an int16 clamp.
-
 namespace cctag::portable::kernels {
 
-/// `saturate_cast<short>(float)`: `cvRound` (nearest-even under the default rounding mode) then a
-/// clamp to the int16 range.
 inline std::int16_t round_to_int16(float value) {
     const float rounded = std::nearbyint(value);
-    if (rounded >= 32767.f) return 32767;
-    if (rounded <= -32768.f) return -32768;
+    if (rounded >= 32767.f) {
+        return 32767;
+    }
+    if (rounded <= -32768.f) {
+        return -32768;
+    }
     return static_cast<std::int16_t>(rounded);
 }
 
-/// `kerneldX` of `filter/cvRecode.cpp:74-84`, verbatim. `kerneldY` is its transpose.
+/// `kerneldX` of src/cctag/filter/cvRecode.cpp:74-84. `kerneldY` is its transpose.
 inline constexpr float kDerivativeKernel[9][9] = {
     {-0.000000143284235f,
      -0.000003558691641f,
@@ -114,8 +110,7 @@ inline constexpr float kDerivativeKernel[9][9] = {
      0.000000143284235f},
 };
 
-/// The non-zero taps of one derivative kernel in the order `preprocess2DKernel` keeps them:
-/// row-major, zero coefficients dropped. Offsets are relative to the anchor (4, 4).
+/// The taps of one derivative kernel. Offsets are relative to the anchor (4, 4).
 struct GradientTaps {
     static constexpr int count = 72;
     float coefficient[count];
@@ -130,7 +125,9 @@ constexpr GradientTaps make_gradient_taps(bool transposed) {
     for (int ky = 0; ky < 9; ++ky) {
         for (int kx = 0; kx < 9; ++kx) {
             const float c = transposed ? kDerivativeKernel[kx][ky] : kDerivativeKernel[ky][kx];
-            if (c == 0.f) continue;
+            if (c == 0.f) {
+                continue;
+            }
             taps.coefficient[k] = c;
             taps.dx[k] = static_cast<std::int8_t>(kx - 4);
             taps.dy[k] = static_cast<std::int8_t>(ky - 4);
@@ -143,8 +140,7 @@ constexpr GradientTaps make_gradient_taps(bool transposed) {
 inline constexpr GradientTaps kDxTaps = make_gradient_taps(false);
 inline constexpr GradientTaps kDyTaps = make_gradient_taps(true);
 
-/// One output pixel of `filter2D` with replicate borders: 72 separately rounded multiply-adds in
-/// tap order, then `saturate_cast<short>`.
+/// One output pixel of `filter2D` with replicate borders.
 inline std::int16_t gradient_at(
     const std::uint8_t* src,
     std::size_t stride,
@@ -170,5 +166,86 @@ inline std::int16_t gradient_at(
 }
 
 } // namespace cctag::portable::kernels
+
+#ifdef CCTAG_TEST_KERNELS_GRADIENT
+// Check pixel indexing, borders and rounding against OpenCV using the same coefficients.
+#include <boost/test/unit_test.hpp>
+
+#include <opencv2/core.hpp>
+#include <opencv2/imgproc.hpp>
+
+#include <algorithm>
+#include <cstdint>
+
+namespace cctag::portable::kernels::tests {
+
+namespace {
+
+/// A deterministic, textured image: concentric rings plus noise from a linear congruential
+/// generator, so neighbouring pixels differ and every kernel tap matters.
+cv::Mat1b test_image(int width, int height) {
+    cv::Mat1b image(height, width);
+    std::uint32_t state = 12345u;
+    for (int y = 0; y < height; ++y) {
+        for (int x = 0; x < width; ++x) {
+            state = state * 1664525u + 1013904223u;
+            const int ring = ((x * x + y * y) / 37) % 2 ? 200 : 40;
+            image(y, x) = static_cast<std::uint8_t>(ring + (state >> 27));
+        }
+    }
+    return image;
+}
+
+/// `gradient_at` against `filter2D` at every pixel of a `width` x `height` image.
+void expect_gradient_at_reproduces_filter2d(int width, int height) {
+    const cv::Mat1b image = test_image(width, height);
+    cv::Mat1f kernel_dx(9, 9);
+    std::copy_n(&kernels::kDerivativeKernel[0][0], kernel_dx.total(), kernel_dx.begin());
+    const cv::Mat1f kernel_dy = kernel_dx.t();
+    cv::Mat1s dx, dy;
+    cv::filter2D(image, dx, CV_16SC1, kernel_dx, cv::Point{-1, -1}, 0.0, cv::BORDER_REPLICATE);
+    cv::filter2D(image, dy, CV_16SC1, kernel_dy, cv::Point{-1, -1}, 0.0, cv::BORDER_REPLICATE);
+
+    const std::size_t stride = image.step1();
+    const auto w = static_cast<std::uint32_t>(width);
+    const auto h = static_cast<std::uint32_t>(height);
+    for (std::uint32_t y = 0; y < h; ++y) {
+        for (std::uint32_t x = 0; x < w; ++x) {
+            BOOST_TEST_CONTEXT(width << "x" << height << " pixel (" << x << ", " << y << ")") {
+                BOOST_CHECK_EQUAL(
+                    kernels::gradient_at(image[0], stride, w, h, x, y, kernels::kDxTaps),
+                    dx(static_cast<int>(y), static_cast<int>(x))
+                );
+                BOOST_CHECK_EQUAL(
+                    kernels::gradient_at(image[0], stride, w, h, x, y, kernels::kDyTaps),
+                    dy(static_cast<int>(y), static_cast<int>(x))
+                );
+            }
+        }
+    }
+}
+
+} // namespace
+
+BOOST_AUTO_TEST_SUITE(gradient_element_suite)
+
+BOOST_AUTO_TEST_CASE(gradient_at_reproduces_filter2d_at_every_pixel) {
+    expect_gradient_at_reproduces_filter2d(37, 23);
+}
+
+// Every size up to the kernel's 9x9 footprint and a little beyond: images narrower than the kernel
+// replicate one border pixel across several taps, and both sides of a pixel can clamp at once.
+BOOST_AUTO_TEST_CASE(gradient_at_reproduces_filter2d_on_images_smaller_than_the_kernel) {
+    for (int height = 1; height <= 12; ++height) {
+        for (int width = 1; width <= 12; ++width) {
+            expect_gradient_at_reproduces_filter2d(width, height);
+        }
+    }
+}
+
+BOOST_AUTO_TEST_SUITE_END()
+
+} // namespace cctag::portable::kernels::tests
+#endif // CCTAG_TEST_KERNELS_GRADIENT
 
 #endif

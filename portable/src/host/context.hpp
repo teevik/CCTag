@@ -15,9 +15,8 @@
 
 namespace cctag::portable {
 
-/// The owner of all portable-pipeline state for one detection pipe: the stage buffers of every
-/// pyramid level. Created once per `pipeId` and reused by every frame; `ensure` adapts it to new
-/// dimensions or parameters and is a no-op in steady state, so frame two allocates nothing.
+/// Owns buffers for a CCTag detection pipe. Keeps the same buffers between frames to avoid
+/// reallocations.
 template <class Backend>
 struct Context {
     std::uint32_t width = 0;
@@ -25,9 +24,12 @@ struct Context {
     std::vector<typename Backend::Buffers> levels;
 
     void ensure(std::uint32_t input_width, std::uint32_t input_height, const Parameters& params) {
-        // The legacy pipeline sizes its pyramid by the processed layer count (Detection.cpp:813).
         const std::size_t count = params._numberOfProcessedMultiresLayers;
-        if (input_width == width && input_height == height && levels.size() == count) return;
+        if (input_width == width && input_height == height && levels.size() == count) {
+            return;
+        }
+
+        // Size has changed, resize levels and buffers
         levels.resize(count);
         std::uint32_t level_width = input_width;
         std::uint32_t level_height = input_height;
@@ -42,5 +44,50 @@ struct Context {
 };
 
 } // namespace cctag::portable
+
+#ifdef CCTAG_TEST_HOST_CONTEXT
+#include "backends/cpu/backend.hpp"
+
+#include <boost/test/unit_test.hpp>
+
+namespace cctag::portable::tests::context {
+
+BOOST_AUTO_TEST_SUITE(context_suite)
+
+BOOST_AUTO_TEST_CASE(context_sizes_levels_by_integer_halving) {
+    Context<cpu::Backend> context;
+    const cctag::Parameters params(3);
+
+    // Create odd sized image
+    constexpr std::uint32_t input_width = 37;
+    constexpr std::uint32_t input_height = 23;
+    context.ensure(input_width, input_height, params);
+
+    // Ensure correct number of levels is created
+    BOOST_REQUIRE_EQUAL(context.levels.size(), params._numberOfProcessedMultiresLayers);
+
+    // Level 0 has the input dimensions. Level 1 halves each dimension, rounding down:
+    BOOST_CHECK_EQUAL(context.levels[1].width, input_width / 2);
+    BOOST_CHECK_EQUAL(context.levels[1].height, input_height / 2);
+
+    // Three halvings divide each dimension by 8, again rounding down:
+    BOOST_CHECK_EQUAL(context.levels[3].width, input_width / 8);
+    BOOST_CHECK_EQUAL(context.levels[3].height, input_height / 8);
+}
+
+BOOST_AUTO_TEST_CASE(context_reuses_level_zero_storage_when_dimensions_are_unchanged) {
+    Context<cpu::Backend> context;
+    const cctag::Parameters params(3);
+    context.ensure(37, 23, params);
+    const auto* before = context.levels[0].src.data;
+    context.ensure(37, 23, params);
+    // Ensure no reallocation
+    BOOST_CHECK_EQUAL(before, context.levels[0].src.data);
+}
+
+BOOST_AUTO_TEST_SUITE_END()
+
+} // namespace cctag::portable::tests::context
+#endif // CCTAG_TEST_HOST_CONTEXT
 
 #endif

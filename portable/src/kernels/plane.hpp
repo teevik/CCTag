@@ -13,9 +13,7 @@
 
 namespace cctag::portable::kernels {
 
-/// A two-dimensional array of one element type: the shape of every image-sized stage buffer.
-/// `stride` is in elements, so a pitched device plane fits; the probe's `stride_bytes` is
-/// `stride * sizeof(T)`.
+/// A non-owning view of a two-dimensional array of one element type.
 template <class T>
 struct Plane {
     T* data = nullptr;

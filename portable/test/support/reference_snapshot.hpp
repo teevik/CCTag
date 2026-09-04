@@ -8,15 +8,14 @@
 #ifndef CCTAG_PORTABLE_TEST_REFERENCE_SNAPSHOT_HPP
 #define CCTAG_PORTABLE_TEST_REFERENCE_SNAPSHOT_HPP
 
-// Host-only test support for stage isolation (thesis #67): reads a stage snapshot — the
-// safetensors file of docs/specs/stage-snapshots.md §5 that the reference producer writes — and
-// fills the CPU backend's stage buffers with the reference's outputs, so one stage function can
-// run on the reference's input to that stage and be compared element-exact against the
-// reference's output. The whole-run ratchet cannot tell a wrong stage from a stage fed something
-// subtly different upstream; this can.
+// Test support for stage isolation: reads a reference snapshot (the safetensors file the legacy
+// pipeline writes with every stage's outputs for one problem) and fills the CPU backend's stage
+// buffers with the reference snapshot's outputs, so one stage function can run on its reference
+// input and be compared element-exact against its reference output. A whole-run
+// comparison cannot tell a wrong stage from a stage fed something subtly different upstream; this
+// can.
 //
-// The header is parsed with Boost.JSON (header-only, ADR 0006); the data section is viewed in
-// place.
+// The header is parsed with Boost.JSON (header-only); the data section is viewed in place.
 
 #include "backends/cpu/backend.hpp"
 #include "host/context.hpp"
@@ -35,7 +34,7 @@
 
 namespace cctag::portable::test {
 
-/// The pipeline stages in canonical order (§5.1); the enumerator order is the stage order.
+/// The pipeline stages, in pipeline order; tensor names start with the stage name.
 enum class Stage {
     pyramid,
     gradient,
@@ -51,7 +50,7 @@ const char* stage_name(Stage stage);
 /// Inverse of `stage_name`; empty for an unknown name.
 std::optional<Stage> parse_stage(const std::string& name);
 
-/// The four dtypes the contract allows (§4.3).
+/// The four element types a stage snapshot may contain.
 enum class Dtype {
     u8,
     i16,
@@ -81,7 +80,7 @@ constexpr Dtype dtype_of<float>() {
     return Dtype::f32;
 }
 
-/// One tensor of a snapshot, viewing the file's bytes (which the snapshot owns).
+/// One tensor of a snapshot.
 struct Tensor {
     std::string name;
     Dtype dtype = Dtype::u8;
@@ -104,8 +103,7 @@ struct Tensor {
     void expect_dtype(Dtype expected) const;
 };
 
-/// A parsed stage snapshot: `__metadata__` plus every tensor by its full name. Movable, not
-/// copyable — the tensors view the owned byte buffer.
+/// A parsed stage snapshot: `__metadata__` plus every tensor by its full name.
 class ReferenceSnapshot {
   public:
     static ReferenceSnapshot read(const std::filesystem::path& file);
@@ -120,7 +118,7 @@ class ReferenceSnapshot {
     const std::map<std::string, std::string>& metadata() const {
         return metadata_;
     }
-    /// A mandatory `__metadata__` field (§5.4); throws when absent.
+    /// A `__metadata__` field; throws when absent.
     const std::string& meta(const std::string& key) const;
     std::uint32_t meta_u32(const std::string& key) const;
 
@@ -162,13 +160,13 @@ class ReferenceSnapshot {
     std::map<std::string, Tensor> tensors_;
 };
 
-/// `$CCTAG_REFERENCE_SNAPSHOTS` when set and non-empty: the store of reference snapshots that
-/// `nix develop` and the nix checks export.
+/// `$CCTAG_REFERENCE_SNAPSHOTS` when set and non-empty: the directory of reference snapshots,
+/// one `<problem>.safetensors` per test image.
 std::optional<std::filesystem::path> reference_snapshots_dir();
-/// Every `*.safetensors` in the store, sorted by name; empty when the store is unset.
+/// Every `*.safetensors` in the store, sorted by name. Empty when the store is unset.
 std::vector<std::filesystem::path> reference_snapshot_files();
 
-/// Copies a `[height, width]` tensor into a plane of the same element type and dimensions; throws
+/// Copies a `[height, width]` tensor into a plane of the same element type and dimensions. Throws
 /// on a dtype or shape mismatch.
 template <class T>
 void copy_plane(const Tensor& reference, kernels::Plane<T> plane) {
@@ -190,9 +188,8 @@ void copy_plane(const Tensor& reference, kernels::Plane<T> plane) {
 }
 
 /// Fills one level's stage buffers (already sized by `Buffers::ensure`) with the reference's
-/// outputs of every stage up to and including `upto`. The prototype's buffers stop at `gradient`;
-/// each stage the build adds extends this with one more fill (the `edge_points`/`vote`/`linking`
-/// tensors are already in the storage layout of ADR 0002, so those fills are straight copies).
+/// outputs of every stage up to and including `upto`. The buffers stop at `gradient` so far; each
+/// new stage extends this with one more fill.
 void fill_level(
     const ReferenceSnapshot& snapshot,
     std::uint32_t level,
@@ -233,7 +230,9 @@ Mismatch compare_plane(const Tensor& reference, kernels::Plane<const T> plane) {
         for (std::uint32_t x = 0; x < plane.width; ++x) {
             const std::size_t index = static_cast<std::size_t>(y) * plane.width + x;
             if (std::memcmp(&row[x], &expected[index], sizeof(T)) != 0) {
-                if (mismatch.count == 0) mismatch.first = index;
+                if (mismatch.count == 0) {
+                    mismatch.first = index;
+                }
                 ++mismatch.count;
             }
         }
@@ -255,7 +254,9 @@ Mismatch compare_values(const Tensor& reference, std::span<const T> values) {
     mismatch.total = expected.size();
     for (std::size_t index = 0; index < expected.size(); ++index) {
         if (std::memcmp(&values[index], &expected[index], sizeof(T)) != 0) {
-            if (mismatch.count == 0) mismatch.first = index;
+            if (mismatch.count == 0) {
+                mismatch.first = index;
+            }
             ++mismatch.count;
         }
     }

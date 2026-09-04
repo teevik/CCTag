@@ -16,11 +16,6 @@
 namespace cctag::portable {
 using SelectedBackend = cpu::Backend;
 }
-#elif defined(CCTAG_PORTABLE_BACKEND_STUB)
-#include "backends/stub/backend.hpp"
-namespace cctag::portable {
-using SelectedBackend = stub::Backend;
-}
 #else
 #error "CCTAG_PORTABLE_BACKEND_<NAME> must be defined for exactly one execution backend"
 #endif
@@ -39,11 +34,13 @@ using SelectedContext = portable::Context<portable::SelectedBackend>;
 std::mutex registry_mutex;
 std::map<int, std::unique_ptr<SelectedContext>> registry;
 
-/// One persistent context per pipe
+/// One persistent context per pipe, created on first use.
 SelectedContext& context_for(int pipeId) {
     const std::lock_guard<std::mutex> lock(registry_mutex);
     auto& slot = registry[pipeId];
-    if (!slot) slot = std::make_unique<SelectedContext>();
+    if (!slot) {
+        slot = std::make_unique<SelectedContext>();
+    }
     return *slot;
 }
 
@@ -59,8 +56,8 @@ void cctagDetection(
     const std::string& parameterFile,
     const std::string& cctagBankFilename
 ) {
-    // TODO(slice 7, markers): load parameterFile through Params.cpp and cctagBankFilename through
-    // CCTagMarkersBank. Until then refuse them
+    // TODO(markers stage): load parameterFile through Params.cpp and cctagBankFilename through
+    // CCTagMarkersBank. Until then refuse them.
     if (!parameterFile.empty() || !cctagBankFilename.empty()) {
         throw std::logic_error(
             "cctagDetection: parameter and bank files are not supported by the portable pipeline "
@@ -86,10 +83,13 @@ void cctagDetection(
     (void)pBank;
     markers.clear();
 
-    if (graySrc.empty()) return;
+    if (graySrc.empty()) {
+        return;
+    }
 
-    if (graySrc.type() != CV_8UC1)
+    if (graySrc.type() != CV_8UC1) {
         throw std::invalid_argument("cctagDetection: the input image must be 8-bit single-channel");
+    }
 
     const portable::kernels::Plane<const std::uint8_t> input{
         .data = graySrc.ptr<std::uint8_t>(0),
