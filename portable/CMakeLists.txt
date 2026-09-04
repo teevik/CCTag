@@ -6,6 +6,8 @@ if(NOT CCTAG_PORTABLE_BACKEND MATCHES "^(cpu|stub)$")
   message(FATAL_ERROR "CCTAG_PORTABLE_BACKEND must be 'cpu' or 'stub', got '${CCTAG_PORTABLE_BACKEND}'")
 endif()
 option(CCTAG_PORTABLE_PARALLEL "Compile the portable pipeline's kernels with OpenMP pragmas" ON)
+# Comma-separated -fsanitize= list (e.g. "address,undefined"), applied to the library and its tests
+set(CCTAG_PORTABLE_SANITIZERS "" CACHE STRING "Sanitizers for the portable pipeline and its tests")
 
 set(PORTABLE_SHARED_SOURCES
     ${PROJECT_SOURCE_DIR}/src/cctag/CCTagMarkersBank.cpp
@@ -55,6 +57,13 @@ function(cctag_portable_configure target)
   target_include_directories(${target} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
   if(CCTAG_PORTABLE_OPENMP)
     target_compile_definitions(${target} PRIVATE CCTAG_PORTABLE_PARALLEL=1)
+  endif()
+  if(CCTAG_PORTABLE_SANITIZERS)
+    # Undefined behaviour aborts the test instead of printing and returning success
+    target_compile_options(${target} PRIVATE
+        -fsanitize=${CCTAG_PORTABLE_SANITIZERS} -fno-sanitize-recover=all -fno-omit-frame-pointer)
+    # PUBLIC so that everything linking the library links the sanitizer runtime too
+    target_link_options(${target} PUBLIC -fsanitize=${CCTAG_PORTABLE_SANITIZERS})
   endif()
 endfunction()
 
@@ -112,7 +121,15 @@ if(CCTAG_BUILD_TESTS)
   # ones the fork reproduces bit for bit); every portable test runs under the same mask.
   set(CCTAG_PORTABLE_OPENCV_CPU_DISABLE "AVX512_SKX,AVX2,FP16,AVX,SSE4_2,SSE4_1"
       CACHE STRING "OPENCV_CPU_DISABLE for the portable pipeline's tests")
+  # OMP_WAIT_POLICY: the tests run thousands of parallel regions on tiny images; spinning threads on
+  # a loaded machine turn 40 ms into 15 s.
   get_property(portable_tests DIRECTORY PROPERTY TESTS)
   set_tests_properties(${portable_tests} PROPERTIES
-      ENVIRONMENT "OPENCV_CPU_DISABLE=${CCTAG_PORTABLE_OPENCV_CPU_DISABLE}")
+      ENVIRONMENT "OPENCV_CPU_DISABLE=${CCTAG_PORTABLE_OPENCV_CPU_DISABLE};OMP_WAIT_POLICY=passive")
+  # Without the store the isolation cases skip; ctest reports that as "Not Run" rather than as a pass.
+  # Boost.Test only logs the skip at the test_suite level.
+  set_property(TEST portable_stage_isolation.stage_isolation_suite APPEND PROPERTY
+      ENVIRONMENT "BOOST_TEST_LOG_LEVEL=test_suite")
+  set_tests_properties(portable_stage_isolation.stage_isolation_suite PROPERTIES
+      SKIP_REGULAR_EXPRESSION "is skipped because precondition failed")
 endif()

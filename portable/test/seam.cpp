@@ -157,6 +157,22 @@ BOOST_AUTO_TEST_CASE(stub_backend_matches_the_cpu_backend_bit_for_bit) {
     expect_identical(baseline, stub);
 }
 
+// Every image size from the smallest with four non-empty levels (8 halves to 1) up to one that is
+// odd at every level: each level is even or odd at every size along the way, and the coarsest
+// levels are narrower than the gradient kernel.
+BOOST_AUTO_TEST_CASE(stub_backend_matches_the_cpu_backend_at_every_small_size) {
+    Context<cpu::Backend> cpu_context;
+    Context<stub::Backend> stub_context;
+    for (std::uint32_t h = 8; h <= 23; ++h) {
+        for (std::uint32_t w = 8; w <= 23; ++w) {
+            BOOST_TEST_CONTEXT(w << "x" << h) {
+                const auto image = test_image(w, h);
+                expect_identical(run(cpu_context, image, w, h), run(stub_context, image, w, h));
+            }
+        }
+    }
+}
+
 BOOST_AUTO_TEST_CASE(probe_sees_every_level_of_each_stage_in_pipeline_order) {
     const std::uint32_t w = 37, h = 23;
     Context<cpu::Backend> context;
