@@ -2,6 +2,8 @@
 # See README.md in this directory. Production kernels/ code uses only the standard library so its
 # element functions compile for a device too. Host code and guarded tests use OpenCV, Eigen and
 # Boost as the legacy pipeline does.
+cmake_minimum_required(VERSION 3.20)
+
 # The execution backend `cctagDetection` is compiled against. Only `cpu` exists today; a device
 # backend adds its name here and its sources below.
 set(CCTAG_PORTABLE_BACKEND "cpu" CACHE STRING "Execution backend of the portable pipeline: cpu")
@@ -47,7 +49,7 @@ find_package(OpenMP REQUIRED COMPONENTS CXX)
 function(cctag_portable_configure target)
   set_target_properties(${target} PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON CXX_EXTENSIONS OFF)
   target_compile_options(${target} PRIVATE ${PORTABLE_EXACT_FLOAT_OPTIONS} ${PORTABLE_WARNING_OPTIONS})
-  target_include_directories(${target} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+  target_include_directories(${target} PRIVATE ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/src)
   if(CCTAG_PORTABLE_SANITIZERS)
     # Undefined behaviour aborts the test instead of printing and returning success
     target_compile_options(${target} PRIVATE
@@ -82,52 +84,22 @@ if(NOT "${CMAKE_CXX_COMPILER_ID}" STREQUAL "MSVC")
 endif()
 
 if(CCTAG_BUILD_TESTS)
-  # Compile cases in their owning file. Header tests use a generated include driver so their
-  # selector is enabled in exactly one translation unit, including when other tests use the header.
   function(cctag_portable_add_test name source)
-    cmake_parse_arguments(test "" "DEFINE" "LINK" ${ARGN})
     set(target portable_${name})
-    set(owner "${CMAKE_CURRENT_SOURCE_DIR}/${source}")
-    if(source MATCHES "\\.hpp$")
-      if(NOT test_DEFINE)
-        message(FATAL_ERROR "Header tests in ${source} need a DEFINE selector")
-      endif()
-      set(driver "${CMAKE_CURRENT_BINARY_DIR}/test/${name}.cpp")
-      file(GENERATE OUTPUT "${driver}" CONTENT "#include \"${source}\"\n")
-      set_source_files_properties("${driver}" PROPERTIES COMPILE_DEFINITIONS ${test_DEFINE})
-    else()
-      set(driver "${owner}")
-    endif()
-
-    add_executable(${target} test/main.cpp "${driver}")
+    set_source_files_properties("${source}" PROPERTIES LANGUAGE CXX)
+    add_executable(${target} test/main.cpp "${source}")
     cctag_portable_configure(${target})
-    target_include_directories(${target} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
-    target_compile_definitions(${target} PRIVATE BOOST_TEST_DYN_LINK)
-    if(test_DEFINE AND NOT source MATCHES "\\.hpp$")
-      target_compile_definitions(${target} PRIVATE ${test_DEFINE})
-    endif()
-    target_link_libraries(${target} PRIVATE ${test_LINK} Boost::unit_test_framework OpenMP::OpenMP_CXX)
-
-    # Discover suites in the owner, not in the generated driver. Reconfigure when they change.
-    set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${owner}")
-    file(STRINGS "${owner}" suites REGEX "^[ \t]*BOOST_AUTO_TEST_SUITE\\(")
-    if(NOT suites)
-      message(FATAL_ERROR "No Boost.Test suites found in ${source}")
-    endif()
-    foreach(suite IN LISTS suites)
-      string(REGEX REPLACE ".*\\( *([A-Za-z_0-9]+) *\\).*" "\\1" suite "${suite}")
-      add_test(NAME ${target}.${suite}
-          COMMAND ${target} --run_test=${suite} --catch_system_error=yes)
-    endforeach()
+    target_compile_definitions(${target} PRIVATE BOOST_TEST_DYN_LINK ${ARGN})
+    target_link_libraries(${target} PRIVATE CCTag Boost::unit_test_framework OpenMP::OpenMP_CXX)
+    add_test(NAME ${target} COMMAND ${target} --catch_system_error=yes)
   endfunction()
 
-  cctag_portable_add_test(detection_api test/detection_api.cpp LINK CCTag)
+  cctag_portable_add_test(detection_api test/detection_api.cpp)
   cctag_portable_add_test(gradient_element src/kernels/gradient.hpp
-      DEFINE CCTAG_TEST_KERNELS_GRADIENT LINK CCTag)
-  cctag_portable_add_test(context src/host/context.hpp
-      DEFINE CCTAG_TEST_HOST_CONTEXT LINK CCTag)
+      CCTAG_TEST_KERNELS_GRADIENT)
+  cctag_portable_add_test(context src/host/context.hpp CCTAG_TEST_HOST_CONTEXT)
   cctag_portable_add_test(host_sequence src/host/detect.hpp
-      DEFINE CCTAG_TEST_HOST_SEQUENCE LINK CCTag)
+      CCTAG_TEST_HOST_SEQUENCE)
 
   # Stage-isolation tests (one per stage function); they skip unless $CCTAG_REFERENCE_SNAPSHOTS is set
   add_library(cctag_portable_test_support STATIC test/support/reference_snapshot.cpp)
@@ -136,8 +108,9 @@ if(CCTAG_BUILD_TESTS)
   cctag_portable_configure(cctag_portable_test_support)
   # Compile the reader directly into its own tests, so it is defined once in that executable.
   cctag_portable_add_test(snapshot_support test/support/reference_snapshot.cpp
-      DEFINE CCTAG_TEST_REFERENCE_SNAPSHOT LINK CCTag)
-  cctag_portable_add_test(stage_isolation test/stage_isolation.cpp LINK cctag_portable_test_support)
+      CCTAG_TEST_REFERENCE_SNAPSHOT)
+  cctag_portable_add_test(stage_isolation test/stage_isolation.cpp)
+  target_link_libraries(portable_stage_isolation PRIVATE cctag_portable_test_support)
 
   # OpenCV's SIMD paths sum in a different order from its scalar path and can differ in the last bit.
   # The reference snapshots are produced with them masked, the element functions reproduce the scalar
@@ -151,8 +124,8 @@ if(CCTAG_BUILD_TESTS)
       ENVIRONMENT "OPENCV_CPU_DISABLE=${CCTAG_PORTABLE_OPENCV_CPU_DISABLE};OMP_WAIT_POLICY=passive")
   # Without the snapshot store the isolation cases skip; make ctest report that as "Not Run" rather
   # than as a pass. Boost.Test only logs the skip at the test_suite level.
-  set_property(TEST portable_stage_isolation.stage_isolation_suite APPEND PROPERTY
+  set_property(TEST portable_stage_isolation APPEND PROPERTY
       ENVIRONMENT "BOOST_TEST_LOG_LEVEL=test_suite")
-  set_tests_properties(portable_stage_isolation.stage_isolation_suite PROPERTIES
+  set_tests_properties(portable_stage_isolation PROPERTIES
       SKIP_REGULAR_EXPRESSION "is skipped because precondition failed")
 endif()
