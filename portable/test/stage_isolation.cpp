@@ -17,65 +17,57 @@
 #include "kernels/plane.hpp"
 #include "support/reference_snapshot.hpp"
 
-#include <boost/test/unit_test.hpp>
+#include <boost/ut.hpp>
 
 #include <cstdint>
+#include <iostream>
 #include <vector>
 
+using namespace boost::ut;
 using namespace cctag::portable;
 using namespace cctag::portable::test;
 
 namespace {
 
-boost::test_tools::assertion_result store_available(boost::unit_test::test_unit_id) {
-    boost::test_tools::assertion_result result(reference_snapshots_dir().has_value());
-    if (!result) {
-        result.message() << "CCTAG_REFERENCE_SNAPSHOTS is not set: enter `nix develop` or point it "
-                            "at the reference-snapshot store";
-    }
-    return result;
-}
-
 std::vector<std::filesystem::path> snapshot_files_or_fail() {
     const std::vector<std::filesystem::path> files = reference_snapshot_files();
-    BOOST_REQUIRE_MESSAGE(
-        !files.empty(),
-        "no *.safetensors in " << reference_snapshots_dir()->string()
-    );
+    expect(!files.empty()) << "no *.safetensors in " << reference_snapshots_dir()->string()
+                           << fatal;
     return files;
 }
 
 } // namespace
 
-BOOST_AUTO_TEST_SUITE(stage_isolation_suite)
+int main(int argc, const char** argv) {
+    if (!reference_snapshots_dir()) {
+        std::cout << "CCTAG_REFERENCE_SNAPSHOTS is not set: enter `nix develop` or point it "
+                     "at the reference-snapshot store\n";
+        return 77;
+    }
 
-BOOST_AUTO_TEST_CASE(
-    pyramid_matches_reference_snapshot_from_each_reference_finer_level,
-    *boost::unit_test::precondition(store_available)
-) {
-    for (const auto& file : snapshot_files_or_fail()) {
-        const ReferenceSnapshot snapshot = ReferenceSnapshot::read(file);
-        BOOST_TEST_CONTEXT("problem " << snapshot.problem()) {
-            Context<cpu::Backend> context;
-            fill_context(snapshot, Stage::pyramid, context);
-            auto& levels = context.levels;
+    const suite<"stage_isolation"> stage_isolation_suite = [] {
+        "pyramid matches reference snapshot from each reference finer level"_test = [] {
+            for (const auto& file : snapshot_files_or_fail()) {
+                const ReferenceSnapshot snapshot = ReferenceSnapshot::read(file);
+                Context<cpu::Backend> context;
+                fill_context(snapshot, Stage::pyramid, context);
+                auto& levels = context.levels;
 
-            // Level 0 is the load: the reference image in, the same bytes out.
-            const Tensor& image = snapshot.tensor(Stage::pyramid, 0, "src");
-            const std::vector<std::uint8_t> pixels = image.as<std::uint8_t>();
-            cpu::Backend::load(
-                levels[0],
-                {pixels.data(),
-                 snapshot.image_width(),
-                 snapshot.image_height(),
-                 snapshot.image_width()}
-            );
-            const Mismatch loaded =
-                compare_plane<std::uint8_t>(image, levels[0].src_plane().as_const());
-            BOOST_CHECK_MESSAGE(loaded.exact(), describe(image, loaded));
+                // Level 0 is the load: the reference image in, the same bytes out.
+                const Tensor& image = snapshot.tensor(Stage::pyramid, 0, "src");
+                const std::vector<std::uint8_t> pixels = image.as<std::uint8_t>();
+                cpu::Backend::load(
+                    levels[0],
+                    {pixels.data(),
+                     snapshot.image_width(),
+                     snapshot.image_height(),
+                     snapshot.image_width()}
+                );
+                const Mismatch loaded =
+                    compare_plane<std::uint8_t>(image, levels[0].src_plane().as_const());
+                expect(loaded.exact()) << snapshot.problem() << describe(image, loaded);
 
-            for (std::uint32_t level = 1; level < levels.size(); ++level) {
-                BOOST_TEST_CONTEXT("level " << level) {
+                for (std::uint32_t level = 1; level < levels.size(); ++level) {
                     // The finer level holds this test's own output from the previous iteration:
                     // restore the reference's before it becomes the input.
                     fill_level(snapshot, level - 1, Stage::pyramid, levels[level - 1]);
@@ -83,25 +75,18 @@ BOOST_AUTO_TEST_CASE(
                     const Tensor& expected = snapshot.tensor(Stage::pyramid, level, "src");
                     const Mismatch mismatch =
                         compare_plane<std::uint8_t>(expected, levels[level].src_plane().as_const());
-                    BOOST_CHECK_MESSAGE(mismatch.exact(), describe(expected, mismatch));
+                    expect(mismatch.exact()) << snapshot.problem() << describe(expected, mismatch);
                 }
             }
-        }
-    }
-}
+        };
 
-BOOST_AUTO_TEST_CASE(
-    gradient_matches_reference_snapshot_from_reference_pyramid_planes,
-    *boost::unit_test::precondition(store_available)
-) {
-    for (const auto& file : snapshot_files_or_fail()) {
-        const ReferenceSnapshot snapshot = ReferenceSnapshot::read(file);
-        BOOST_TEST_CONTEXT("problem " << snapshot.problem()) {
-            Context<cpu::Backend> context;
-            fill_context(snapshot, Stage::pyramid, context);
-            auto& levels = context.levels;
-            for (std::uint32_t level = 0; level < levels.size(); ++level) {
-                BOOST_TEST_CONTEXT("level " << level) {
+        "gradient matches reference snapshot from reference pyramid planes"_test = [] {
+            for (const auto& file : snapshot_files_or_fail()) {
+                const ReferenceSnapshot snapshot = ReferenceSnapshot::read(file);
+                Context<cpu::Backend> context;
+                fill_context(snapshot, Stage::pyramid, context);
+                auto& levels = context.levels;
+                for (std::uint32_t level = 0; level < levels.size(); ++level) {
                     cpu::Backend::gradient(levels[level]);
                     const Tensor& dx = snapshot.tensor(Stage::gradient, level, "dx");
                     const Tensor& dy = snapshot.tensor(Stage::gradient, level, "dy");
@@ -109,12 +94,11 @@ BOOST_AUTO_TEST_CASE(
                         compare_plane<std::int16_t>(dx, levels[level].dx_plane().as_const());
                     const Mismatch dy_mismatch =
                         compare_plane<std::int16_t>(dy, levels[level].dy_plane().as_const());
-                    BOOST_CHECK_MESSAGE(dx_mismatch.exact(), describe(dx, dx_mismatch));
-                    BOOST_CHECK_MESSAGE(dy_mismatch.exact(), describe(dy, dy_mismatch));
+                    expect(dx_mismatch.exact()) << snapshot.problem() << describe(dx, dx_mismatch);
+                    expect(dy_mismatch.exact()) << snapshot.problem() << describe(dy, dy_mismatch);
                 }
             }
-        }
-    }
+        };
+    };
+    return cfg<override>.run({.argc = argc, .argv = argv});
 }
-
-BOOST_AUTO_TEST_SUITE_END()

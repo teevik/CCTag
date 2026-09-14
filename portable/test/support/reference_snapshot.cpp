@@ -348,9 +348,8 @@ std::string describe(const Tensor& reference, const Mismatch& mismatch) {
 
 } // namespace cctag::portable::test
 
-#ifdef CCTAG_TEST_REFERENCE_SNAPSHOT
-// Hand-built bytes check parsing and comparisons without the reference-snapshot store.
-#include <boost/test/unit_test.hpp>
+#ifdef CCTAG_TEST
+#include <boost/ut.hpp>
 
 #include <cstdint>
 #include <stdexcept>
@@ -361,8 +360,7 @@ namespace cctag::portable::test {
 
 namespace {
 
-/// A hand-built safetensors file: `u64` header length, the JSON header padded to eight bytes with
-/// spaces (as the Rust writer does), then the data section.
+/// Build safetensors file
 std::vector<std::uint8_t> safetensors(std::string header, const std::vector<std::uint8_t>& data) {
     while (header.size() % 8 != 0) {
         header.push_back(' ');
@@ -379,91 +377,96 @@ std::vector<std::uint8_t> safetensors(std::string header, const std::vector<std:
 
 } // namespace
 
-BOOST_AUTO_TEST_SUITE(snapshot_support_suite)
+using namespace boost::ut;
 
-BOOST_AUTO_TEST_CASE(reads_metadata_and_unaligned_tensor_values_from_hand_built_bytes) {
-    // A U8 [2, 3] plane followed by an I16 [1, 2] plane that starts at an odd byte offset.
-    const std::string header =
-        R"({"pyramid/level0/src": {"dtype": "U8", "shape": [2, 3], "data_offsets": [0, 6]},)"
-        R"( "gradient/level0/dx": {"dtype": "I16", "shape": [1, 2], "data_offsets": [7, 11]},)"
-        R"( "pad": {"dtype": "U8", "shape": [1], "data_offsets": [6, 7]},)"
-        R"( "__metadata__": {"problem": "01", "crowns": "3", "stages": "pyramid,gradient"}})";
-    const std::vector<std::uint8_t> data = {1, 2, 3, 4, 5, 6, 9, 0xFE, 0xFF, 0x02, 0x00};
-    const ReferenceSnapshot snapshot = ReferenceSnapshot::from_bytes(safetensors(header, data));
+inline suite<"snapshot_support"> snapshot_support_suite = [] {
+    "reads metadata and unaligned tensor values from hand built bytes"_test = [] {
+        // A U8 [2, 3] plane followed by an I16 [1, 2] plane that starts at an odd byte offset.
+        const std::string header =
+            R"({"pyramid/level0/src": {"dtype": "U8", "shape": [2, 3], "data_offsets": [0, 6]},)"
+            R"( "gradient/level0/dx": {"dtype": "I16", "shape": [1, 2], "data_offsets": [7, 11]},)"
+            R"( "pad": {"dtype": "U8", "shape": [1], "data_offsets": [6, 7]},)"
+            R"( "__metadata__": {"problem": "01", "crowns": "3", "stages": "pyramid,gradient"}})";
+        const std::vector<std::uint8_t> data = {1, 2, 3, 4, 5, 6, 9, 0xFE, 0xFF, 0x02, 0x00};
+        const ReferenceSnapshot snapshot = ReferenceSnapshot::from_bytes(safetensors(header, data));
 
-    BOOST_CHECK_EQUAL(snapshot.problem(), "01");
-    BOOST_CHECK_EQUAL(snapshot.crowns(), 3u);
-    BOOST_REQUIRE_EQUAL(snapshot.stages().size(), 2u);
-    BOOST_CHECK(snapshot.stages()[1] == Stage::gradient);
-    BOOST_CHECK(snapshot.has(Stage::gradient));
-    BOOST_CHECK(!snapshot.has(Stage::vote));
+        expect(eq(snapshot.problem(), std::string{"01"}));
+        expect(eq(snapshot.crowns(), 3u));
+        expect(eq(snapshot.stages().size(), 2u)) << fatal;
+        expect(snapshot.stages()[1] == Stage::gradient);
+        expect(snapshot.has(Stage::gradient));
+        expect(!snapshot.has(Stage::vote));
 
-    const Tensor& src = snapshot.tensor(Stage::pyramid, 0, "src");
-    BOOST_CHECK(src.dtype == Dtype::u8);
-    BOOST_REQUIRE_EQUAL(src.shape.size(), 2u);
-    BOOST_CHECK_EQUAL(src.shape[0], 2u);
-    BOOST_CHECK_EQUAL(src.shape[1], 3u);
-    const std::vector<std::uint8_t> pixels = src.as<std::uint8_t>();
-    BOOST_CHECK_EQUAL(pixels.size(), 6u);
-    BOOST_CHECK_EQUAL(pixels[5], 6);
+        const Tensor& src = snapshot.tensor(Stage::pyramid, 0, "src");
+        expect(src.dtype == Dtype::u8);
+        expect(eq(src.shape.size(), 2u)) << fatal;
+        expect(eq(src.shape[0], 2u));
+        expect(eq(src.shape[1], 3u));
+        const std::vector<std::uint8_t> pixels = src.as<std::uint8_t>();
+        expect(eq(pixels.size(), 6u));
+        expect(eq(pixels[5], 6));
 
-    const std::vector<std::int16_t> dx = snapshot.tensor("gradient/level0/dx").as<std::int16_t>();
-    BOOST_REQUIRE_EQUAL(dx.size(), 2u);
-    BOOST_CHECK_EQUAL(dx[0], -2);
-    BOOST_CHECK_EQUAL(dx[1], 2);
+        const std::vector<std::int16_t> dx =
+            snapshot.tensor("gradient/level0/dx").as<std::int16_t>();
+        expect(eq(dx.size(), 2u)) << fatal;
+        expect(eq(dx[0], -2));
+        expect(eq(dx[1], 2));
 
-    BOOST_CHECK_THROW(snapshot.tensor("gradient/level0/dy"), std::runtime_error);
-    BOOST_CHECK_THROW(src.as<std::int32_t>(), std::runtime_error);
-    BOOST_CHECK_THROW(snapshot.meta("image_width"), std::runtime_error);
-}
+        expect(throws<std::runtime_error>([&] { (void)snapshot.tensor("gradient/level0/dy"); }));
+        expect(throws<std::runtime_error>([&] { (void)src.as<std::int32_t>(); }));
+        expect(throws<std::runtime_error>([&] { (void)snapshot.meta("image_width"); }));
+    };
 
-BOOST_AUTO_TEST_CASE(rejects_tensor_byte_counts_that_disagree_with_shape_or_exceed_the_file) {
-    const std::string header =
-        R"({"pyramid/level0/src":{"dtype":"U8","shape":[2,3],"data_offsets":[0,5]},"__metadata__":{}})";
-    BOOST_CHECK_THROW(
-        ReferenceSnapshot::from_bytes(safetensors(header, std::vector<std::uint8_t>(5))),
-        std::runtime_error
-    );
-    const std::string overrun =
-        R"({"pyramid/level0/src":{"dtype":"U8","shape":[2,3],"data_offsets":[0,6]},"__metadata__":{}})";
-    BOOST_CHECK_THROW(
-        ReferenceSnapshot::from_bytes(safetensors(overrun, std::vector<std::uint8_t>(5))),
-        std::runtime_error
-    );
-}
+    "rejects tensor byte counts that disagree with shape or exceed the file"_test = [] {
+        const std::string header =
+            R"({"pyramid/level0/src":{"dtype":"U8","shape":[2,3],"data_offsets":[0,5]},"__metadata__":{}})";
+        expect(throws<std::runtime_error>([&] {
+            (void)ReferenceSnapshot::from_bytes(safetensors(header, std::vector<std::uint8_t>(5)));
+        }));
+        const std::string overrun =
+            R"({"pyramid/level0/src":{"dtype":"U8","shape":[2,3],"data_offsets":[0,6]},"__metadata__":{}})";
+        expect(throws<std::runtime_error>([&] {
+            (void)ReferenceSnapshot::from_bytes(safetensors(overrun, std::vector<std::uint8_t>(5)));
+        }));
+    };
 
-BOOST_AUTO_TEST_CASE(fills_stage_buffers_and_reports_exact_plane_mismatches) {
-    // `src` and `dx` for a 3x2 level; `dy` is missing on purpose.
-    const std::string header =
-        R"({"pyramid/level0/src":{"dtype":"U8","shape":[2,3],"data_offsets":[0,6]},)"
-        R"("gradient/level0/dx":{"dtype":"I16","shape":[2,3],"data_offsets":[6,18]},)"
-        R"("__metadata__":{"x":"y"}})";
-    const ReferenceSnapshot snapshot = ReferenceSnapshot::from_bytes(
-        safetensors(header, {1, 2, 3, 4, 5, 6, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0})
-    );
-    const Tensor& src = snapshot.tensor(Stage::pyramid, 0, "src");
+    "fills stage buffers and reports exact plane mismatches"_test = [] {
+        // `src` and `dx` for a 3x2 level; `dy` is missing on purpose.
+        const std::string header =
+            R"({"pyramid/level0/src":{"dtype":"U8","shape":[2,3],"data_offsets":[0,6]},)"
+            R"("gradient/level0/dx":{"dtype":"I16","shape":[2,3],"data_offsets":[6,18]},)"
+            R"("__metadata__":{"x":"y"}})";
+        const ReferenceSnapshot snapshot = ReferenceSnapshot::from_bytes(
+            safetensors(header, {1, 2, 3, 4, 5, 6, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0})
+        );
+        const Tensor& src = snapshot.tensor(Stage::pyramid, 0, "src");
 
-    cpu::Buffers buffers;
-    buffers.ensure(3, 2);
-    fill_level(snapshot, 0, Stage::pyramid, buffers);
-    BOOST_CHECK_EQUAL(buffers.src(1, 1), 5);
-    BOOST_CHECK(compare_plane<std::uint8_t>(src, buffers.src_plane().as_const()).exact());
+        cpu::Buffers buffers;
+        buffers.ensure(3, 2);
+        fill_level(snapshot, 0, Stage::pyramid, buffers);
+        expect(eq(buffers.src(1, 1), 5));
+        expect(compare_plane<std::uint8_t>(src, buffers.src_plane().as_const()).exact());
 
-    buffers.src(1, 1) = 0;
-    buffers.src(1, 2) = 0;
-    const Mismatch mismatch = compare_plane<std::uint8_t>(src, buffers.src_plane().as_const());
-    BOOST_CHECK_EQUAL(mismatch.count, 2u);
-    BOOST_CHECK_EQUAL(mismatch.first, 4u); // (y 1, x 1)
+        buffers.src(1, 1) = 0;
+        buffers.src(1, 2) = 0;
+        const Mismatch mismatch = compare_plane<std::uint8_t>(src, buffers.src_plane().as_const());
+        expect(eq(mismatch.count, 2u));
+        expect(eq(mismatch.first, 4u)); // (y 1, x 1)
 
-    cpu::Buffers wrong_size;
-    wrong_size.ensure(2, 3);
-    BOOST_CHECK_THROW(fill_level(snapshot, 0, Stage::pyramid, wrong_size), std::runtime_error);
-    // `dy` is absent: the gradient fill fails; beyond gradient the loader has no buffers yet.
-    BOOST_CHECK_THROW(fill_level(snapshot, 0, Stage::gradient, buffers), std::runtime_error);
-    BOOST_CHECK_THROW(fill_level(snapshot, 0, Stage::edges, buffers), std::runtime_error);
-}
-
-BOOST_AUTO_TEST_SUITE_END()
+        cpu::Buffers wrong_size;
+        wrong_size.ensure(2, 3);
+        expect(throws<std::runtime_error>([&] {
+            (void)fill_level(snapshot, 0, Stage::pyramid, wrong_size);
+        }));
+        // `dy` is absent: the gradient fill fails; beyond gradient the loader has no buffers yet.
+        expect(throws<std::runtime_error>([&] {
+            (void)fill_level(snapshot, 0, Stage::gradient, buffers);
+        }));
+        expect(throws<std::runtime_error>([&] {
+            (void)fill_level(snapshot, 0, Stage::edges, buffers);
+        }));
+    };
+};
 
 } // namespace cctag::portable::test
-#endif // CCTAG_TEST_REFERENCE_SNAPSHOT
+#endif // CCTAG_TEST

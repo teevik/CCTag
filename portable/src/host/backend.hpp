@@ -8,7 +8,6 @@
 #ifndef CCTAG_PORTABLE_HOST_BACKEND_HPP
 #define CCTAG_PORTABLE_HOST_BACKEND_HPP
 
-#include "host/context.hpp"
 #include "host/views.hpp"
 #include "kernels/plane.hpp"
 
@@ -16,6 +15,9 @@
 #include <cstdint>
 
 namespace cctag::portable {
+
+template <class Backend>
+struct Context;
 
 /// Interface for a CCTag execution backend
 template <class B>

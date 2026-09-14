@@ -9,7 +9,6 @@
 #define CCTAG_PORTABLE_BACKENDS_CPU_BACKEND_HPP
 
 #include "host/backend.hpp"
-#include "host/context.hpp"
 #include "host/views.hpp"
 #include "kernels/plane.hpp"
 

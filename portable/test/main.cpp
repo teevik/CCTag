@@ -5,7 +5,8 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/.
  */
-// Shared entry point; cases live in the owning source file or an integration-test source.
-#define BOOST_TEST_MODULE PortablePipeline
+#include <boost/ut.hpp>
 
-#include <boost/test/unit_test.hpp>
+int main(int argc, const char** argv) {
+    return boost::ut::cfg<boost::ut::override>.run({.argc = argc, .argv = argv});
+}

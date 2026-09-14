@@ -167,9 +167,9 @@ inline std::int16_t gradient_at(
 
 } // namespace cctag::portable::kernels
 
-#ifdef CCTAG_TEST_KERNELS_GRADIENT
+#ifdef CCTAG_TEST
 // Check pixel indexing, borders and rounding against OpenCV using the same coefficients.
-#include <boost/test/unit_test.hpp>
+#include <boost/ut.hpp>
 
 #include <opencv2/core.hpp>
 #include <opencv2/imgproc.hpp>
@@ -179,11 +179,11 @@ inline std::int16_t gradient_at(
 
 namespace cctag::portable::kernels::tests {
 
-namespace {
+using namespace boost::ut;
 
 /// A deterministic, textured image: concentric rings plus noise from a linear congruential
 /// generator, so neighbouring pixels differ and every kernel tap matters.
-cv::Mat1b test_image(int width, int height) {
+inline cv::Mat1b test_image(int width, int height) {
     cv::Mat1b image(height, width);
     std::uint32_t state = 12345u;
     for (int y = 0; y < height; ++y) {
@@ -197,7 +197,7 @@ cv::Mat1b test_image(int width, int height) {
 }
 
 /// `gradient_at` against `filter2D` at every pixel of a `width` x `height` image.
-void expect_gradient_at_reproduces_filter2d(int width, int height) {
+inline void expect_gradient_at_reproduces_filter2d(int width, int height) {
     const cv::Mat1b image = test_image(width, height);
     cv::Mat1f kernel_dx(9, 9);
     std::copy_n(&kernels::kDerivativeKernel[0][0], kernel_dx.total(), kernel_dx.begin());
@@ -211,41 +211,36 @@ void expect_gradient_at_reproduces_filter2d(int width, int height) {
     const auto h = static_cast<std::uint32_t>(height);
     for (std::uint32_t y = 0; y < h; ++y) {
         for (std::uint32_t x = 0; x < w; ++x) {
-            BOOST_TEST_CONTEXT(width << "x" << height << " pixel (" << x << ", " << y << ")") {
-                BOOST_CHECK_EQUAL(
-                    kernels::gradient_at(image[0], stride, w, h, x, y, kernels::kDxTaps),
-                    dx(static_cast<int>(y), static_cast<int>(x))
-                );
-                BOOST_CHECK_EQUAL(
-                    kernels::gradient_at(image[0], stride, w, h, x, y, kernels::kDyTaps),
-                    dy(static_cast<int>(y), static_cast<int>(x))
-                );
+            expect(
+                eq(kernels::gradient_at(image[0], stride, w, h, x, y, kernels::kDxTaps),
+                   dx(static_cast<int>(y), static_cast<int>(x)))
+            ) << "dx"
+              << width << "x" << height << "pixel" << x << y;
+            expect(
+                eq(kernels::gradient_at(image[0], stride, w, h, x, y, kernels::kDyTaps),
+                   dy(static_cast<int>(y), static_cast<int>(x)))
+            ) << "dy"
+              << width << "x" << height << "pixel" << x << y;
+        }
+    }
+}
+
+inline suite<"gradient_element"> gradient_element_suite = [] {
+    "gradient at reproduces filter2d at every pixel"_test = [] {
+        expect_gradient_at_reproduces_filter2d(37, 23);
+    };
+
+    // Every size up to the kernel's 9x9 footprint and a bit more
+    "gradient at reproduces filter2d on images smaller than the kernel"_test = [] {
+        for (int height = 1; height <= 12; ++height) {
+            for (int width = 1; width <= 12; ++width) {
+                expect_gradient_at_reproduces_filter2d(width, height);
             }
         }
-    }
-}
-
-} // namespace
-
-BOOST_AUTO_TEST_SUITE(gradient_element_suite)
-
-BOOST_AUTO_TEST_CASE(gradient_at_reproduces_filter2d_at_every_pixel) {
-    expect_gradient_at_reproduces_filter2d(37, 23);
-}
-
-// Every size up to the kernel's 9x9 footprint and a little beyond: images narrower than the kernel
-// replicate one border pixel across several taps, and both sides of a pixel can clamp at once.
-BOOST_AUTO_TEST_CASE(gradient_at_reproduces_filter2d_on_images_smaller_than_the_kernel) {
-    for (int height = 1; height <= 12; ++height) {
-        for (int width = 1; width <= 12; ++width) {
-            expect_gradient_at_reproduces_filter2d(width, height);
-        }
-    }
-}
-
-BOOST_AUTO_TEST_SUITE_END()
+    };
+};
 
 } // namespace cctag::portable::kernels::tests
-#endif // CCTAG_TEST_KERNELS_GRADIENT
+#endif // CCTAG_TEST
 
 #endif

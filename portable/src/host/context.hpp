@@ -45,49 +45,49 @@ struct Context {
 
 } // namespace cctag::portable
 
-#ifdef CCTAG_TEST_HOST_CONTEXT
+#ifdef CCTAG_TEST
 #include "backends/cpu/backend.hpp"
 
-#include <boost/test/unit_test.hpp>
+#include <boost/ut.hpp>
 
 namespace cctag::portable::tests::context {
 
-BOOST_AUTO_TEST_SUITE(context_suite)
+using namespace boost::ut;
 
-BOOST_AUTO_TEST_CASE(context_sizes_levels_by_integer_halving) {
-    Context<cpu::Backend> context;
-    const cctag::Parameters params(3);
+inline suite<"context"> context_suite = [] {
+    "context sizes levels by integer halving"_test = [] {
+        Context<cpu::Backend> context;
+        const cctag::Parameters params(3);
 
-    // Create odd sized image
-    constexpr std::uint32_t input_width = 37;
-    constexpr std::uint32_t input_height = 23;
-    context.ensure(input_width, input_height, params);
+        // Create odd sized image
+        constexpr std::uint32_t input_width = 37;
+        constexpr std::uint32_t input_height = 23;
+        context.ensure(input_width, input_height, params);
 
-    // Ensure correct number of levels is created
-    BOOST_REQUIRE_EQUAL(context.levels.size(), params._numberOfProcessedMultiresLayers);
+        // Ensure correct number of levels is created
+        expect(eq(context.levels.size(), params._numberOfProcessedMultiresLayers)) << fatal;
 
-    // Level 0 has the input dimensions. Level 1 halves each dimension, rounding down:
-    BOOST_CHECK_EQUAL(context.levels[1].width, input_width / 2);
-    BOOST_CHECK_EQUAL(context.levels[1].height, input_height / 2);
+        // Level 0 has the input dimensions. Level 1 halves each dimension, rounding down:
+        expect(eq(context.levels[1].width, input_width / 2));
+        expect(eq(context.levels[1].height, input_height / 2));
 
-    // Three halvings divide each dimension by 8, again rounding down:
-    BOOST_CHECK_EQUAL(context.levels[3].width, input_width / 8);
-    BOOST_CHECK_EQUAL(context.levels[3].height, input_height / 8);
-}
+        // Three halvings divide each dimension by 8, again rounding down:
+        expect(eq(context.levels[3].width, input_width / 8));
+        expect(eq(context.levels[3].height, input_height / 8));
+    };
 
-BOOST_AUTO_TEST_CASE(context_reuses_level_zero_storage_when_dimensions_are_unchanged) {
-    Context<cpu::Backend> context;
-    const cctag::Parameters params(3);
-    context.ensure(37, 23, params);
-    const auto* before = context.levels[0].src.data;
-    context.ensure(37, 23, params);
-    // Ensure no reallocation
-    BOOST_CHECK_EQUAL(before, context.levels[0].src.data);
-}
-
-BOOST_AUTO_TEST_SUITE_END()
+    "context reuses level zero storage when dimensions are unchanged"_test = [] {
+        Context<cpu::Backend> context;
+        const cctag::Parameters params(3);
+        context.ensure(37, 23, params);
+        const void* before = context.levels[0].src.data;
+        context.ensure(37, 23, params);
+        // Ensure no reallocation
+        expect(eq(before, static_cast<const void*>(context.levels[0].src.data)));
+    };
+};
 
 } // namespace cctag::portable::tests::context
-#endif // CCTAG_TEST_HOST_CONTEXT
+#endif // CCTAG_TEST
 
 #endif

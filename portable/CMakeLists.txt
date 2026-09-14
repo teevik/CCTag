@@ -84,31 +84,33 @@ if(NOT "${CMAKE_CXX_COMPILER_ID}" STREQUAL "MSVC")
 endif()
 
 if(CCTAG_BUILD_TESTS)
-  function(cctag_portable_add_test name source)
+  find_package(ut 2.3.1 REQUIRED CONFIG)
+
+  function(cctag_portable_add_test name)
     set(target portable_${name})
-    set_source_files_properties("${source}" PROPERTIES LANGUAGE CXX)
-    add_executable(${target} test/main.cpp "${source}")
+    set_source_files_properties(${ARGN} PROPERTIES LANGUAGE CXX)
+    add_executable(${target} ${ARGN})
     cctag_portable_configure(${target})
-    target_compile_definitions(${target} PRIVATE BOOST_TEST_DYN_LINK ${ARGN})
-    target_link_libraries(${target} PRIVATE CCTag Boost::unit_test_framework OpenMP::OpenMP_CXX)
-    add_test(NAME ${target} COMMAND ${target} --catch_system_error=yes)
+    target_link_libraries(${target} PRIVATE CCTag Boost::ut OpenMP::OpenMP_CXX)
+    add_test(NAME ${target} COMMAND ${target})
   endfunction()
 
-  cctag_portable_add_test(detection_api test/detection_api.cpp)
-  cctag_portable_add_test(gradient_element src/kernels/gradient.hpp
-      CCTAG_TEST_KERNELS_GRADIENT)
-  cctag_portable_add_test(context src/host/context.hpp CCTAG_TEST_HOST_CONTEXT)
-  cctag_portable_add_test(host_sequence src/host/detect.hpp
-      CCTAG_TEST_HOST_SEQUENCE)
+  # Inline suites register once even when an owner is also included by another source.
+  # Compile headers directly to give clangd their own compilation database entries.
+  cctag_portable_add_test(unit
+      test/main.cpp
+      test/detection_api.cpp
+      src/kernels/gradient.hpp
+      src/host/context.hpp
+      src/host/detect.hpp
+      test/support/reference_snapshot.cpp)
+  target_compile_definitions(portable_unit PRIVATE CCTAG_TEST)
 
-  # Stage-isolation tests (one per stage function); they skip unless $CCTAG_REFERENCE_SNAPSHOTS is set
+  # Keep optional snapshot checks separate, so their skip cannot hide a unit-test failure.
   add_library(cctag_portable_test_support STATIC test/support/reference_snapshot.cpp)
   target_include_directories(cctag_portable_test_support PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/test)
   target_link_libraries(cctag_portable_test_support PUBLIC CCTag)
   cctag_portable_configure(cctag_portable_test_support)
-  # Compile the reader directly into its own tests, so it is defined once in that executable.
-  cctag_portable_add_test(snapshot_support test/support/reference_snapshot.cpp
-      CCTAG_TEST_REFERENCE_SNAPSHOT)
   cctag_portable_add_test(stage_isolation test/stage_isolation.cpp)
   target_link_libraries(portable_stage_isolation PRIVATE cctag_portable_test_support)
 
@@ -122,10 +124,5 @@ if(CCTAG_BUILD_TESTS)
   get_property(portable_tests DIRECTORY PROPERTY TESTS)
   set_tests_properties(${portable_tests} PROPERTIES
       ENVIRONMENT "OPENCV_CPU_DISABLE=${CCTAG_PORTABLE_OPENCV_CPU_DISABLE};OMP_WAIT_POLICY=passive")
-  # Without the snapshot store the isolation cases skip; make ctest report that as "Not Run" rather
-  # than as a pass. Boost.Test only logs the skip at the test_suite level.
-  set_property(TEST portable_stage_isolation APPEND PROPERTY
-      ENVIRONMENT "BOOST_TEST_LOG_LEVEL=test_suite")
-  set_tests_properties(portable_stage_isolation PROPERTIES
-      SKIP_REGULAR_EXPRESSION "is skipped because precondition failed")
+  set_tests_properties(portable_stage_isolation PROPERTIES SKIP_RETURN_CODE 77)
 endif()

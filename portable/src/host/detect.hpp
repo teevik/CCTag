@@ -88,13 +88,13 @@ void detect(
 
 } // namespace cctag::portable
 
-#ifdef CCTAG_TEST_HOST_SEQUENCE
+#ifdef CCTAG_TEST
 #include "backends/cpu/backend.hpp"
 
 #include <cctag/Params.hpp>
 #include <cctag/Probe.hpp>
 
-#include <boost/test/unit_test.hpp>
+#include <boost/ut.hpp>
 
 #include <omp.h>
 
@@ -107,9 +107,9 @@ void detect(
 
 namespace cctag::portable::tests::host_sequence {
 
-namespace {
+using namespace boost::ut;
 
-/// Records every plane it is shown into `tensors`, and timing events into `timing`.
+/// Records every plane it is shown into `tensors`, and timing events into `timing`
 struct RecordingProbe : cctag::Probe {
     std::map<std::string, std::vector<std::uint8_t>> tensors;
     std::vector<std::string> timing;
@@ -144,8 +144,8 @@ struct RecordingProbe : cctag::Probe {
     }
 };
 
-/// A test image with rings and noise to vary the pixel values.
-std::vector<std::uint8_t>
+/// A test image with rings and noise to vary the pixel values
+inline std::vector<std::uint8_t>
 test_image(std::uint32_t width, std::uint32_t height, std::uint32_t seed = 12345u) {
     // Pattern settings: band size in squared pixels and brightness.
     constexpr std::uint32_t squared_radius_step = 37;
@@ -189,12 +189,12 @@ run(Context<Backend>& context,
     return probe;
 }
 
-void expect_identical(const RecordingProbe& a, const RecordingProbe& b) {
-    BOOST_REQUIRE_EQUAL(a.tensors.size(), b.tensors.size());
+inline void expect_identical(const RecordingProbe& a, const RecordingProbe& b) {
+    expect(eq(a.tensors.size(), b.tensors.size())) << fatal;
     for (const auto& [name, bytes] : a.tensors) {
         const auto other = b.tensors.find(name);
-        BOOST_REQUIRE_MESSAGE(other != b.tensors.end(), name << " missing");
-        BOOST_CHECK_MESSAGE(bytes == other->second, name << " differs");
+        expect(other != b.tensors.end()) << name << " missing" << fatal;
+        expect(bytes == other->second) << name << " differs";
     }
 }
 
@@ -210,75 +210,58 @@ void expect_thread_count_does_not_change_pyramid_or_gradient_planes() {
     expect_identical(single, many);
 }
 
-} // namespace
+inline suite<"host_sequence"> host_sequence_suite = [] {
+    "load copies the input into level zero"_test = [] {
+        const std::uint32_t w = 37, h = 23;
+        const auto image = test_image(w, h);
+        Context<cpu::Backend> context;
+        const RecordingProbe probe = run(context, image, w, h);
+        expect(probe.tensors.at("pyramid/level0/src") == image);
+    };
 
-BOOST_AUTO_TEST_SUITE(host_sequence_suite)
-
-BOOST_AUTO_TEST_CASE(load_copies_the_input_into_level_zero) {
-    const std::uint32_t w = 37, h = 23;
-    const auto image = test_image(w, h);
-    Context<cpu::Backend> context;
-    const RecordingProbe probe = run(context, image, w, h);
-    BOOST_CHECK(probe.tensors.at("pyramid/level0/src") == image);
-}
-
-BOOST_AUTO_TEST_CASE(probe_observes_pyramid_and_gradient_planes_at_every_level) {
-    const std::uint32_t w = 37, h = 23;
-    Context<cpu::Backend> context;
-    const RecordingProbe probe = run(context, test_image(w, h), w, h);
-    BOOST_CHECK_EQUAL(probe.tensors.size(), 12u); // 4 levels x (src, dx, dy)
-    for (std::uint32_t level = 0; level < context.levels.size(); ++level) {
-        BOOST_TEST_CONTEXT("level " << level) {
-            BOOST_CHECK_EQUAL(
-                probe.tensors.count("pyramid/level" + std::to_string(level) + "/src"),
-                1u
-            );
-            BOOST_CHECK_EQUAL(
-                probe.tensors.count("gradient/level" + std::to_string(level) + "/dx"),
-                1u
-            );
-            BOOST_CHECK_EQUAL(
-                probe.tensors.count("gradient/level" + std::to_string(level) + "/dy"),
-                1u
-            );
+    "probe observes pyramid and gradient planes at every level"_test = [] {
+        const std::uint32_t w = 37, h = 23;
+        Context<cpu::Backend> context;
+        const RecordingProbe probe = run(context, test_image(w, h), w, h);
+        expect(eq(probe.tensors.size(), 12u)); // 4 levels x (src, dx, dy)
+        for (std::uint32_t level = 0; level < context.levels.size(); ++level) {
+            expect(eq(probe.tensors.count("pyramid/level" + std::to_string(level) + "/src"), 1u))
+                << "src at level" << level;
+            expect(eq(probe.tensors.count("gradient/level" + std::to_string(level) + "/dx"), 1u))
+                << "dx at level" << level;
+            expect(eq(probe.tensors.count("gradient/level" + std::to_string(level) + "/dy"), 1u))
+                << "dy at level" << level;
         }
-    }
-}
+    };
 
-BOOST_AUTO_TEST_CASE(probe_receives_pyramid_then_gradient_timing_events) {
-    const std::uint32_t w = 37, h = 23;
-    Context<cpu::Backend> context;
-    const RecordingProbe probe = run(context, test_image(w, h), w, h);
-    const std::vector<std::string> expected =
-        {"enter pyramid", "leave pyramid", "enter gradient", "leave gradient"};
-    BOOST_CHECK_EQUAL_COLLECTIONS(
-        probe.timing.begin(),
-        probe.timing.end(),
-        expected.begin(),
-        expected.end()
-    );
-}
+    "probe receives pyramid then gradient timing events"_test = [] {
+        const std::uint32_t w = 37, h = 23;
+        Context<cpu::Backend> context;
+        const RecordingProbe probe = run(context, test_image(w, h), w, h);
+        const std::vector<std::string> expected =
+            {"enter pyramid", "leave pyramid", "enter gradient", "leave gradient"};
+        expect(probe.timing == expected);
+    };
 
-BOOST_AUTO_TEST_CASE(context_reuse_does_not_change_pyramid_or_gradient_planes) {
-    const std::uint32_t w = 64, h = 48;
-    const auto first = test_image(w, h, 1u);
-    const auto second = test_image(w, h, 2u);
-    Context<cpu::Backend> fresh;
-    const RecordingProbe expected = run(fresh, first, w, h);
-    Context<cpu::Backend> reused;
-    run(reused, first, w, h);
-    run(reused, second, w, h);
-    const RecordingProbe third = run(reused, first, w, h);
-    expect_identical(expected, third);
-}
+    "context reuse does not change pyramid or gradient planes"_test = [] {
+        const std::uint32_t w = 64, h = 48;
+        const auto first = test_image(w, h, 1u);
+        const auto second = test_image(w, h, 2u);
+        Context<cpu::Backend> fresh;
+        const RecordingProbe expected = run(fresh, first, w, h);
+        Context<cpu::Backend> reused;
+        run(reused, first, w, h);
+        run(reused, second, w, h);
+        const RecordingProbe third = run(reused, first, w, h);
+        expect_identical(expected, third);
+    };
 
-BOOST_AUTO_TEST_CASE(cpu_thread_count_does_not_change_pyramid_or_gradient_planes) {
-    expect_thread_count_does_not_change_pyramid_or_gradient_planes<cpu::Backend>();
-}
-
-BOOST_AUTO_TEST_SUITE_END()
+    "cpu thread count does not change pyramid or gradient planes"_test = [] {
+        expect_thread_count_does_not_change_pyramid_or_gradient_planes<cpu::Backend>();
+    };
+};
 
 } // namespace cctag::portable::tests::host_sequence
-#endif // CCTAG_TEST_HOST_SEQUENCE
+#endif // CCTAG_TEST
 
 #endif

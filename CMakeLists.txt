@@ -131,8 +131,10 @@ endif()
 
 if(CCTAG_BUILD_TESTS)
   enable_testing()
-  set(BOOST_REQUIRED_COMPONENTS "${BOOST_REQUIRED_COMPONENTS};unit_test_framework")
-  include(BoostTestHelper)
+  if(CCTAG_PIPELINE STREQUAL "legacy")
+    set(BOOST_REQUIRED_COMPONENTS "${BOOST_REQUIRED_COMPONENTS};unit_test_framework")
+    include(BoostTestHelper)
+  endif()
 endif()
 
 find_package(Boost 1.66.0 REQUIRED COMPONENTS ${BOOST_REQUIRED_COMPONENTS})
