@@ -5,9 +5,46 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/.
  */
+#include "host/context.hpp"
+#include "host/detect.hpp"
+
 #include <cctag/ICCTag.hpp>
+#include <cctag/Probe.hpp>
+
+#if defined(CCTAG_PORTABLE_BACKEND_CPU)
+#include "backends/cpu/backend.hpp"
+namespace cctag::portable {
+using SelectedBackend = cpu::Backend;
+}
+#else
+#error "CCTAG_PORTABLE_BACKEND_<NAME> must be defined for exactly one execution backend"
+#endif
+
+#include <map>
+#include <memory>
+#include <mutex>
+#include <stdexcept>
 
 namespace cctag {
+
+namespace {
+
+using SelectedContext = portable::Context<portable::SelectedBackend>;
+
+std::mutex registry_mutex;
+std::map<int, std::unique_ptr<SelectedContext>> registry;
+
+/// Returns the pipe's persistent context, creating it on first use
+SelectedContext& context_for(int pipeId) {
+    const std::lock_guard<std::mutex> lock(registry_mutex);
+    auto& slot = registry[pipeId];
+    if (!slot) {
+        slot = std::make_unique<SelectedContext>();
+    }
+    return *slot;
+}
+
+} // namespace
 
 void cctagDetection(
     boost::ptr_list<ICCTag>& markers,
@@ -19,14 +56,17 @@ void cctagDetection(
     const std::string& parameterFile,
     const std::string& cctagBankFilename
 ) {
-    (void)pipeId;
-    (void)frame;
-    (void)graySrc;
-    (void)nRings;
-    (void)durations;
-    (void)parameterFile;
-    (void)cctagBankFilename;
-    markers.clear();
+    // TODO(markers stage): Load `parameterFile` through Params.cpp and
+    // `cctagBankFilename` through CCTagMarkersBank
+    // Reject file arguments until loading is supported
+    if (!parameterFile.empty() || !cctagBankFilename.empty()) {
+        throw std::logic_error(
+            "cctagDetection: parameter and bank files are not supported by the portable pipeline "
+            "yet"
+        );
+    }
+    const Parameters params(nRings);
+    cctagDetection(markers, pipeId, frame, graySrc, params, durations, nullptr, nullptr);
 }
 
 void cctagDetection(
@@ -39,14 +79,28 @@ void cctagDetection(
     const CCTagMarkersBank* pBank,
     Probe* probe
 ) {
-    (void)pipeId;
     (void)frame;
-    (void)graySrc;
-    (void)params;
     (void)durations;
     (void)pBank;
-    (void)probe;
     markers.clear();
+
+    if (graySrc.empty()) {
+        return;
+    }
+
+    if (graySrc.type() != CV_8UC1) {
+        throw std::invalid_argument("cctagDetection: the input image must be 8-bit single-channel");
+    }
+
+    const portable::kernels::Plane<const std::uint8_t> input{
+        .data = graySrc.ptr<std::uint8_t>(0),
+        .width = static_cast<std::uint32_t>(graySrc.cols),
+        .height = static_cast<std::uint32_t>(graySrc.rows),
+        .stride = graySrc.step[0],
+    };
+
+    const Parameters& effective_params = Parameters::OverrideLoaded ? Parameters::Override : params;
+    portable::detect(context_for(pipeId), input, effective_params, probe);
 }
 
 } // namespace cctag

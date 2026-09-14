@@ -13,92 +13,97 @@
 
 namespace cctag {
 
+/// Pixel data for one pyramid level
 struct Plane
 {
     std::uint32_t width;
     std::uint32_t height;
     std::size_t stride_bytes;
-    const void* data; // U8 for source/edges, I16 for dx/dy.
+    /// uint8_t for source/edge images and int16_t for dx/dy gradients
+    const void* data;
 };
 
 struct EdgePointsView
 {
-    std::uint32_t n;        // Number of edge points.
-    const std::int32_t* xy; // [n, 2], pipeline enumeration order.
-    const float* grad;      // [n, 2], (dx, dy).
+    std::uint32_t point_count;
+    /// `point_count` (x, y) pairs
+    const std::int32_t* positions_xy;
+    /// `point_count` (dx, dy) pairs
+    const float* gradients;
 };
 
+/// Voting results for the points reported by `edge_points` at this pyramid level
 struct VoteView
 {
-    const std::int32_t* links;          // [n, 2], -1 when absent.
-    const std::int32_t* voters_offsets; // [n + 1].
-    const std::int32_t* voters_values;
-    const std::int32_t* is_max; // [n], received-vote count.
-    const float* flow_length;   // [n].
-    std::uint32_t n_seeds;
-    const std::int32_t* seeds; // [n_seeds], ownership-resolution order.
+    /// (before, after) point indices for each edge point, -1 means no link
+    const std::int32_t* linked_point_indices;
+    const std::int32_t* voter_offsets;
+    const std::int32_t* voter_point_indices;
+
+    /// Vote count for each edge point, -1 if it did not qualify as a seed
+    const std::int32_t* seed_vote_counts;
+    const float* mean_flow_lengths;
+    std::uint32_t seed_count;
+    const std::int32_t* seed_point_indices;
 };
 
 struct LinkingView
 {
-    std::uint32_t c;                     // Number of candidate-marker segments.
-    const std::int32_t* seeds;           // [c].
-    const std::int32_t* segment_offsets; // [c + 1].
-    const std::int32_t* segment_values;  // Segment walk order.
-    const std::int32_t* child_counts;    // [c].
-    const float* avg_vote;               // [c].
+    /// Number of candidate-marker segments
+    std::uint32_t segment_count;
+    /// One seed point index per segment
+    const std::int32_t* seed_point_indices;
+
+    /// `segment_count + 1` offsets delimiting segments in `segment_point_indices`
+    const std::int32_t* segment_offsets;
+    /// Point indices in segment-walk order
+    const std::int32_t* segment_point_indices;
+    /// Number of child edge points per segment
+    const std::int32_t* child_point_counts;
+    /// Voting score for each segment
+    const float* vote_scores;
 };
 
 struct CandidatesView
 {
-    std::uint32_t n;           // Number of candidate markers.
-    const float* ellipse;      // [n, 5], (cx, cy, a, b, angle), level-0 space.
-    const std::int32_t* level; // [n].
-    const float* quality;      // [n].
+    std::uint32_t candidate_count;
+    /// `candidate_count` (cx, cy, a, b, angle) groups, scaled to the original image
+    const float* outer_ellipse_parameters;
+    /// Pyramid level where each candidate marker was found
+    const std::int32_t* pyramid_levels;
+    const float* quality_scores;
 };
 
+/// Detection candidates and their identification results
 struct MarkersView
 {
-    std::uint32_t n;            // Number of detection candidates.
-    const float* xy;            // [n, 2].
-    const std::int32_t* id;     // [n], -1 when undefined.
-    const std::int32_t* status; // [n].
+    std::uint32_t candidate_count;
+    /// `candidate_count` (x, y) pairs
+    const float* positions_xy;
+    /// Marker IDs, -1 if unidentified
+    const std::int32_t* marker_ids;
+    const std::int32_t* identification_statuses;
 };
 
-/**
- * Pipeline-neutral observation point for detection stages.
- *
- * All view pointers are valid only for the duration of their callback and
- * must be copied by an observing probe. Indices are pipeline-local positions
- * in the xy array supplied to edge_points for the same pyramid level. They
- * are deliberately not canonical indices: an observing probe canonicalises
- * them while copying the transient views.
- *
- * Callbacks are made only from sequential code and at most once for each
- * (stage, level) in one detection. All pyramid callbacks precede the processed
- * level callbacks. Within a processed level, edge_points precedes vote, which
- * precedes linking. candidates (candidate markers) follows the level loop, and
- * markers (detection candidates) follows the final marker sort. A stage is
- * present exactly when its callback was made, so a pipeline may stop at any
- * stage boundary. The legacy CUDA path does not invoke a probe in v1.
- */
+/// Receives pipeline stage results and timing events
+/// Override callbacks to observe data, by default no-op
 class Probe
 {
   public:
     virtual ~Probe() = default;
 
-    virtual void pyramid(std::uint32_t, const Plane&) {}
-    virtual void gradient(std::uint32_t, const Plane&, const Plane&) {}
-    virtual void edges(std::uint32_t, const Plane&) {}
-    virtual void edge_points(std::uint32_t, const EdgePointsView&) {}
-    virtual void vote(std::uint32_t, const VoteView&) {}
-    virtual void linking(std::uint32_t, const LinkingView&) {}
-    virtual void candidates(const CandidatesView&) {}
-    virtual void markers(const MarkersView&) {}
+    virtual void pyramid(std::uint32_t pyramid_level, const Plane& source) {}
+    virtual void gradient(std::uint32_t pyramid_level, const Plane& gradient_x, const Plane& gradient_y) {}
+    virtual void edges(std::uint32_t pyramid_level, const Plane& edges) {}
+    virtual void edge_points(std::uint32_t pyramid_level, const EdgePointsView& edge_points) {}
+    virtual void vote(std::uint32_t pyramid_level, const VoteView& votes) {}
+    virtual void linking(std::uint32_t pyramid_level, const LinkingView& linking) {}
+    virtual void candidates(const CandidatesView& candidates) {}
+    virtual void markers(const MarkersView& markers) {}
 
-    // Timing is recorded in memory by interested probes, never in snapshots.
-    virtual void enter(const char*) {}
-    virtual void leave(const char*) {}
+    /// `enter`/`leave` mark the start/end of a named stage's work
+    virtual void enter(const char* stage_name) {}
+    virtual void leave(const char* stage_name) {}
 };
 
 } // namespace cctag
