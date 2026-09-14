@@ -100,6 +100,14 @@ void detect(
         }
     }
 
+    // Walk seeds and gather segments at every pyramid level
+    {
+        StageTiming<Backend> timing(context, probe, "linking");
+        for (std::uint32_t level = 0; level < count; ++level) {
+            Backend::linking(levels[level], params);
+        }
+    }
+
     // Observe host views after all stages, outside the stage timings
     if (probe) {
         for (std::uint32_t level = 0; level < count; ++level) {
@@ -125,6 +133,18 @@ void detect(
                     vote.flow_length.data(),
                     static_cast<std::uint32_t>(vote.seed_order.size()),
                     vote.seed_order.data()
+                }
+            );
+            const LinkingHost linking = Backend::host_linking(levels[level]);
+            probe->linking(
+                level,
+                cctag::LinkingView{
+                    linking.c,
+                    linking.seeds.data(),
+                    linking.segment_offsets.data(),
+                    linking.segment_values.data(),
+                    linking.child_counts.data(),
+                    linking.avg_vote.data()
                 }
             );
         }
@@ -238,6 +258,35 @@ struct RecordingProbe : cctag::Probe {
         );
     }
 
+    void linking(std::uint32_t level, const cctag::LinkingView& linking) override {
+        const auto n = linking.segment_count;
+        const auto prefix = "linking/level" + std::to_string(level) + "/";
+        record(
+            prefix + "seeds",
+            {1, n, sizeof(std::int32_t), linking.seed_point_indices},
+            sizeof(std::int32_t)
+        );
+        record(
+            prefix + "segments/offsets",
+            {1, n + 1, sizeof(std::int32_t), linking.segment_offsets},
+            sizeof(std::int32_t)
+        );
+        record(
+            prefix + "segments/values",
+            {1,
+             static_cast<std::uint32_t>(linking.segment_offsets[n]),
+             sizeof(std::int32_t),
+             linking.segment_point_indices},
+            sizeof(std::int32_t)
+        );
+        record(
+            prefix + "child_counts",
+            {1, n, sizeof(std::int32_t), linking.child_point_counts},
+            sizeof(std::int32_t)
+        );
+        record(prefix + "avg_vote", {1, n, sizeof(float), linking.vote_scores}, sizeof(float));
+    }
+
     void enter(const char* stage) override {
         timing.push_back(std::string("enter ") + stage);
     }
@@ -308,6 +357,8 @@ void expect_thread_count_does_not_change_stage_outputs() {
     Context<Backend> context;
     omp_set_num_threads(1);
     const RecordingProbe single = run(context, image, w, h);
+    omp_set_num_threads(3);
+    expect_identical(single, run(context, image, w, h));
     omp_set_num_threads(omp_get_num_procs());
     const RecordingProbe many = run(context, image, w, h);
     expect_identical(single, many);
@@ -322,12 +373,12 @@ inline suite<"host_sequence"> host_sequence_suite = [] {
         expect(probe.tensors.at("pyramid/level0/src") == image);
     };
 
-    "probe observes stages through vote at every level"_test = [] {
+    "probe observes stages through linking at every level"_test = [] {
         const std::uint32_t w = 37, h = 23;
         Context<cpu::Backend> context;
         const RecordingProbe probe = run(context, test_image(w, h), w, h);
-        // Six tensors through edge_points and six from vote at each of 4 levels
-        expect(eq(probe.tensors.size(), 48u));
+        // Twelve tensors through vote and five from linking at each of 4 levels
+        expect(eq(probe.tensors.size(), 68u));
         for (std::uint32_t level = 0; level < context.levels.size(); ++level) {
             expect(eq(probe.tensors.count("pyramid/level" + std::to_string(level) + "/src"), 1u))
                 << "src at level" << level;
@@ -356,10 +407,18 @@ inline suite<"host_sequence"> host_sequence_suite = [] {
                 ) << name
                   << "at level" << level;
             }
+            for (const auto* name :
+                 {"seeds", "segments/offsets", "segments/values", "child_counts", "avg_vote"}) {
+                expect(
+                    eq(probe.tensors.count("linking/level" + std::to_string(level) + "/" + name),
+                       1u)
+                ) << name
+                  << "at level" << level;
+            }
         }
     };
 
-    "probe receives timing events in stage order through vote"_test = [] {
+    "probe receives timing events in stage order through linking"_test = [] {
         const std::uint32_t w = 37, h = 23;
         Context<cpu::Backend> context;
         const RecordingProbe probe = run(context, test_image(w, h), w, h);
@@ -373,7 +432,9 @@ inline suite<"host_sequence"> host_sequence_suite = [] {
             "enter edge_points",
             "leave edge_points",
             "enter vote",
-            "leave vote"
+            "leave vote",
+            "enter linking",
+            "leave linking"
         };
         expect(probe.timing == expected);
     };

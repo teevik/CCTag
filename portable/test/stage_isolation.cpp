@@ -130,6 +130,29 @@ int main(int argc, const char** argv) {
                 }
             }
         };
+        "linking matches reference snapshot from reference vote"_test = [] {
+            for (const auto& file : snapshot_files_or_fail()) {
+                const ReferenceSnapshot snapshot = ReferenceSnapshot::read(file);
+                Context<cpu::Backend> context;
+                fill_context(snapshot, Stage::vote, context);
+                const cctag::Parameters params(snapshot.crowns());
+                for (std::uint32_t level = 0; level < context.levels.size(); ++level) {
+                    cpu::Backend::linking(context.levels[level], params);
+                    const LinkingHost linking = cpu::Backend::host_linking(context.levels[level]);
+                    const auto compare = [&](const char* name, auto values) {
+                        const Tensor& expected = snapshot.tensor(Stage::linking, level, name);
+                        const Mismatch mismatch = compare_values(expected, values);
+                        expect(mismatch.exact())
+                            << snapshot.problem() << describe(expected, mismatch);
+                    };
+                    compare("seeds", linking.seeds);
+                    compare("segments/offsets", linking.segment_offsets);
+                    compare("segments/values", linking.segment_values);
+                    compare("child_counts", linking.child_counts);
+                    compare("avg_vote", linking.avg_vote);
+                }
+            }
+        };
         "vote matches reference snapshot from reference edge points"_test = [] {
             for (const auto& file : snapshot_files_or_fail()) {
                 const ReferenceSnapshot snapshot = ReferenceSnapshot::read(file);

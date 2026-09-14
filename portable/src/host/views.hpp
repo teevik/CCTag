@@ -51,6 +51,16 @@ struct VoteHost {
     std::span<const std::int32_t> seed_order;
 };
 
+/// Read-only host view of one pyramid level's segments in ascending seed order
+struct LinkingHost {
+    std::uint32_t c;
+    std::span<const std::int32_t> seeds;
+    std::span<const std::int32_t> segment_offsets;
+    std::span<const std::int32_t> segment_values;
+    std::span<const std::int32_t> child_counts;
+    std::span<const float> avg_vote;
+};
+
 /// Converts a plane to the probe's format, with the row stride in bytes
 template <class T>
 inline cctag::Plane probe_plane(kernels::Plane<const T> plane) {

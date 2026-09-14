@@ -46,6 +46,8 @@ concept ExecutionBackend = requires(
     { B::edge_points(level) };
     // Links edge points and gathers their votes into the vote graph
     { B::vote(level, params) };
+    // Walks seeds, resolves ownership and gathers segments and their children
+    { B::linking(level, params) };
     // Returns a read-only host view of `src`, produced by `load` or `pyramid`
     { B::host_pyramid(level) } -> std::same_as<PyramidHost>;
     // Returns read-only host views of `dx` and `dy`, produced by `gradient`
@@ -56,6 +58,8 @@ concept ExecutionBackend = requires(
     { B::host_edge_points(level) } -> std::same_as<EdgePointsHost>;
     // Returns a read-only host view of the vote graph and ownership-resolution order
     { B::host_vote(level) } -> std::same_as<VoteHost>;
+    // Returns a read-only host view of segments in ascending seed order
+    { B::host_linking(level) } -> std::same_as<LinkingHost>;
     // Waits for all previously submitted stages to finish
     { B::wait(context) };
 };

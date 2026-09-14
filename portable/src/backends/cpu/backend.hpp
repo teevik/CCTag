@@ -10,6 +10,7 @@
 
 #include "host/backend.hpp"
 #include "host/views.hpp"
+#include "kernels/linking.hpp"
 #include "kernels/plane.hpp"
 
 #include <opencv2/core.hpp>
@@ -64,6 +65,21 @@ struct Buffers {
     std::vector<float> vote_segments;
     std::vector<std::int32_t> voter_cursors;
 
+    /// Each processed seed's walk and the slots accepted by ownership resolution
+    std::vector<kernels::SegmentSlot> arena;
+    std::vector<std::int32_t> accepted_slots;
+    std::vector<std::uint8_t> processed_in;
+    /// Compacted segments in ascending seed order, with points in walk order
+    std::vector<std::int32_t> link_seeds;
+    std::vector<std::int32_t> segment_offsets;
+    std::vector<std::int32_t> segment_values;
+    std::vector<std::int32_t> child_counts;
+    std::vector<float> avg_vote;
+    /// Children in segment-walk order and the candidate order consumed by loop two
+    std::vector<std::int32_t> children_offsets;
+    std::vector<std::int32_t> children_values;
+    std::vector<std::int32_t> loop_one_order;
+
     /// Magnitudes and NMS classes, each with a zero border outside the image
     cv::Mat1i magnitude;
     cv::Mat1b nms_class;
@@ -115,12 +131,15 @@ struct Backend {
     static void edge_points(Buffers& level);
     /// Links edge points and gathers their votes into the vote graph
     static void vote(Buffers& level, const Parameters& params);
+    /// Walks seeds, resolves ownership and gathers segments and their children
+    static void linking(Buffers& level, const Parameters& params);
 
     static PyramidHost host_pyramid(Buffers& level);
     static GradientHost host_gradient(Buffers& level);
     static EdgesHost host_edges(Buffers& level);
     static EdgePointsHost host_edge_points(Buffers& level);
     static VoteHost host_vote(Buffers& level);
+    static LinkingHost host_linking(Buffers& level);
 
     static void wait(Context<Backend>&) {}
 };
