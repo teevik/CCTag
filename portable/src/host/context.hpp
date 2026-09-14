@@ -10,7 +10,10 @@
 
 #include <cctag/Params.hpp>
 
+#include <algorithm>
+#include <bit>
 #include <cstdint>
+#include <stdexcept>
 #include <vector>
 
 namespace cctag::portable {
@@ -24,6 +27,15 @@ struct Context {
 
     void ensure(std::uint32_t input_width, std::uint32_t input_height, const Parameters& params) {
         const std::size_t count = params._numberOfProcessedMultiresLayers;
+        // Every configured level must remain nonempty after integer halving.
+        // Validate before changing buffers so a rejected request leaves the context reusable.
+        const auto max_levels = std::bit_width(std::min(input_width, input_height));
+        if (count == 0 || count > static_cast<std::size_t>(max_levels)) {
+            throw std::invalid_argument(
+                "cctagDetection: processed pyramid level count must be positive and keep every "
+                "level's width and height at least one pixel"
+            );
+        }
         if (input_width == width && input_height == height && levels.size() == count) {
             return;
         }

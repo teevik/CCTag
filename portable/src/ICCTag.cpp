@@ -99,7 +99,8 @@ void cctagDetection(
         .stride = graySrc.step[0],
     };
 
-    portable::detect(context_for(pipeId), input, params, probe);
+    const Parameters& effective_params = Parameters::OverrideLoaded ? Parameters::Override : params;
+    portable::detect(context_for(pipeId), input, effective_params, probe);
 }
 
 } // namespace cctag
