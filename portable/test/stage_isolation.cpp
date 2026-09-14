@@ -92,6 +92,22 @@ int main(int argc, const char** argv) {
                 }
             }
         };
+        "edges match reference snapshot from reference gradient planes"_test = [] {
+            for (const auto& file : snapshot_files_or_fail()) {
+                const ReferenceSnapshot snapshot = ReferenceSnapshot::read(file);
+                Context<cpu::Backend> context;
+                fill_context(snapshot, Stage::gradient, context);
+                const cctag::Parameters params(snapshot.crowns());
+                auto& levels = context.levels;
+                for (std::uint32_t level = 0; level < levels.size(); ++level) {
+                    cpu::Backend::edges(levels[level], params);
+                    const Tensor& edges = snapshot.tensor(Stage::edges, level, "edges");
+                    const Mismatch mismatch =
+                        compare_plane<std::uint8_t>(edges, levels[level].edges_plane().as_const());
+                    expect(mismatch.exact()) << snapshot.problem() << describe(edges, mismatch);
+                }
+            }
+        };
     };
     return cfg<override>.run({.argc = argc, .argv = argv});
 }

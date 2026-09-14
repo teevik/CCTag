@@ -16,7 +16,8 @@ add_library(CCTag
     src/ICCTag.cpp
     src/backends/cpu/buffers.cpp
     src/backends/cpu/pyramid.cpp
-    src/backends/cpu/gradient.cpp)
+    src/backends/cpu/gradient.cpp
+    src/backends/cpu/edges.cpp)
 
 find_package(OpenMP REQUIRED COMPONENTS CXX)
 set(THREADS_PREFER_PTHREAD_FLAG ON)
@@ -80,12 +81,15 @@ if(CCTAG_BUILD_TESTS)
 
   # Give clangd a compile command for each header
   set(unit_test_headers
+      src/kernels/canny.hpp
       src/kernels/gradient.hpp
+      src/kernels/thinning.hpp
       src/host/context.hpp
       src/host/detect.hpp)
   set_source_files_properties(${unit_test_headers} PROPERTIES LANGUAGE CXX)
   cctag_portable_add_test(unit
       ${unit_test_headers}
+      src/backends/cpu/edges.cpp
       test/main.cpp
       test/detection_api.cpp
       test/support/reference_snapshot.cpp)

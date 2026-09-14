@@ -310,8 +310,12 @@ void fill_level(
     if (upto == Stage::gradient) {
         return;
     }
+    copy_plane<std::uint8_t>(snapshot.tensor(Stage::edges, level, "edges"), buffers.edges_plane());
+    if (upto == Stage::edges) {
+        return;
+    }
     throw std::logic_error(
-        std::string("fill_level: the stage buffers stop at gradient; add the fill for ")
+        std::string("fill_level: the stage buffers stop at edges; add the fill for ")
         + stage_name(upto) + " together with its buffers"
     );
 }
@@ -426,6 +430,26 @@ inline suite<"snapshot_support"> snapshot_support_suite = [] {
             R"({"pyramid/level0/src":{"dtype":"U8","shape":[2,3],"data_offsets":[0,6]},"__metadata__":{}})";
         expect(throws<std::runtime_error>([&] {
             (void)ReferenceSnapshot::from_bytes(safetensors(overrun, std::vector<std::uint8_t>(5)));
+        }));
+    };
+
+    "fills edge planes from reference snapshot bytes"_test = [] {
+        const std::string header =
+            R"({"pyramid/level0/src":{"dtype":"U8","shape":[1,2],"data_offsets":[0,2]},)"
+            R"("gradient/level0/dx":{"dtype":"I16","shape":[1,2],"data_offsets":[2,6]},)"
+            R"("gradient/level0/dy":{"dtype":"I16","shape":[1,2],"data_offsets":[6,10]},)"
+            R"("edges/level0/edges":{"dtype":"U8","shape":[1,2],"data_offsets":[10,12]},)"
+            R"("__metadata__":{"schema_version":"1"}})";
+        const ReferenceSnapshot snapshot = ReferenceSnapshot::from_bytes(
+            safetensors(header, {3, 4, 0, 0, 0, 0, 0, 0, 0, 0, 0, 255})
+        );
+        cpu::Buffers buffers;
+        buffers.ensure(2, 1);
+        fill_level(snapshot, 0, Stage::edges, buffers);
+        expect(eq(buffers.edges(0, 0), 0));
+        expect(eq(buffers.edges(0, 1), 255));
+        expect(throws<std::logic_error>([&] {
+            (void)fill_level(snapshot, 0, Stage::edge_points, buffers);
         }));
     };
 

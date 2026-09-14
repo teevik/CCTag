@@ -15,6 +15,7 @@
 #include <opencv2/core.hpp>
 
 #include <cstdint>
+#include <vector>
 
 namespace cctag::portable::cpu {
 
@@ -29,6 +30,16 @@ struct Buffers {
     cv::Mat1s dx;
     /// Vertical gradients
     cv::Mat1s dy;
+    /// Thinned edges, with raw Canny output on the border
+    cv::Mat1b edges;
+
+    /// Magnitudes and NMS classes, each with a zero border outside the image
+    cv::Mat1i magnitude;
+    cv::Mat1b nms_class;
+    /// First thinning pass, with a zero border inside the image
+    cv::Mat1b thinning;
+    /// Pixels still to visit in the hysteresis flood
+    std::vector<std::uint8_t*> hysteresis_stack;
 
     Buffers() = default;
     Buffers(Buffers&&) noexcept = default;
@@ -47,6 +58,9 @@ struct Buffers {
     kernels::Plane<std::int16_t> dy_plane() {
         return {dy[0], width, height, dy.step1()};
     }
+    kernels::Plane<std::uint8_t> edges_plane() {
+        return {edges[0], width, height, edges.step1()};
+    }
 };
 
 /// The CPU execution backend, implementing ExecutionBackend
@@ -59,9 +73,12 @@ struct Backend {
     static void pyramid(Buffers& coarser, const Buffers& finer);
     /// Computes horizontal (`dx`) and vertical (`dy`) gradients from `src`
     static void gradient(Buffers& level);
+    /// Finds and thins edges from `dx` and `dy`
+    static void edges(Buffers& level, const Parameters& params);
 
     static PyramidHost host_pyramid(Buffers& level);
     static GradientHost host_gradient(Buffers& level);
+    static EdgesHost host_edges(Buffers& level);
 
     static void wait(Context<Backend>&) {}
 };

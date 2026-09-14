@@ -27,6 +27,11 @@ struct GradientHost {
     kernels::Plane<const std::int16_t> dy;
 };
 
+/// Read-only host view of one pyramid level's thinned edges
+struct EdgesHost {
+    kernels::Plane<const std::uint8_t> edges;
+};
+
 /// Converts a plane to the probe's format, with the row stride in bytes
 template <class T>
 inline cctag::Plane probe_plane(kernels::Plane<const T> plane) {
