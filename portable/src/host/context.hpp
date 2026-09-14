@@ -16,7 +16,7 @@
 namespace cctag::portable {
 
 /// Owns buffers for a CCTag detection pipe. Keeps the same buffers between frames to avoid
-/// reallocations.
+/// reallocations
 template <class Backend>
 struct Context {
     std::uint32_t width = 0;

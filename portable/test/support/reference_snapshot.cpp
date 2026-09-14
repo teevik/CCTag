@@ -122,8 +122,8 @@ ReferenceSnapshot ReferenceSnapshot::read(const std::filesystem::path& file) {
 
 ReferenceSnapshot ReferenceSnapshot::from_bytes(std::vector<std::uint8_t> bytes) {
     ReferenceSnapshot snapshot;
-    snapshot.bytes_ = std::move(bytes);
-    const std::vector<std::uint8_t>& data = snapshot.bytes_;
+    snapshot.bytes = std::move(bytes);
+    const std::vector<std::uint8_t>& data = snapshot.bytes;
     if (data.size() < 8) {
         throw std::runtime_error("safetensors: file shorter than its header length field");
     }
@@ -172,7 +172,10 @@ ReferenceSnapshot ReferenceSnapshot::from_bytes(std::vector<std::uint8_t> bytes)
                 throw std::runtime_error("__metadata__: expected a JSON object");
             }
             for (const auto& [key, value] : entry.get_object()) {
-                snapshot.metadata_.emplace(key, string(value, "__metadata__." + std::string(key)));
+                snapshot.metadata_entries.emplace(
+                    key,
+                    string(value, "__metadata__." + std::string(key))
+                );
             }
             continue;
         }
@@ -212,17 +215,17 @@ ReferenceSnapshot ReferenceSnapshot::from_bytes(std::vector<std::uint8_t> bytes)
         }
         tensor.bytes =
             payload.subspan(static_cast<std::size_t>(begin), static_cast<std::size_t>(end - begin));
-        snapshot.tensors_.emplace(tensor_name, std::move(tensor));
+        snapshot.tensor_entries.emplace(tensor_name, std::move(tensor));
     }
-    if (snapshot.metadata_.empty()) {
+    if (snapshot.metadata_entries.empty()) {
         throw std::runtime_error("safetensors: no __metadata__ (not a stage snapshot)");
     }
     return snapshot;
 }
 
 const std::string& ReferenceSnapshot::meta(const std::string& key) const {
-    const auto found = metadata_.find(key);
-    if (found == metadata_.end()) {
+    const auto found = metadata_entries.find(key);
+    if (found == metadata_entries.end()) {
         throw std::runtime_error("__metadata__." + key + " is absent");
     }
     return found->second;
@@ -258,8 +261,8 @@ bool ReferenceSnapshot::has(Stage stage) const {
 }
 
 const Tensor& ReferenceSnapshot::tensor(const std::string& name) const {
-    const auto found = tensors_.find(name);
-    if (found == tensors_.end()) {
+    const auto found = tensor_entries.find(name);
+    if (found == tensor_entries.end()) {
         throw std::runtime_error("tensor " + name + " is absent from the snapshot");
     }
     return found->second;

@@ -13,7 +13,7 @@
 
 namespace cctag::portable::kernels {
 
-/// A non-owning view of a two-dimensional array of one element type.
+/// A non-owning view of a two-dimensional array
 template <class T>
 struct Plane {
     T* data = nullptr;
@@ -25,7 +25,7 @@ struct Plane {
         return data + static_cast<std::size_t>(y) * stride;
     }
 
-    /// The same plane, read-only.
+    /// The same plane as read-only
     Plane<const T> as_const() const {
         return {data, width, height, stride};
     }

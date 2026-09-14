@@ -116,7 +116,7 @@ class ReferenceSnapshot {
     ReferenceSnapshot& operator=(const ReferenceSnapshot&) = delete;
 
     const std::map<std::string, std::string>& metadata() const {
-        return metadata_;
+        return metadata_entries;
     }
     /// A `__metadata__` field; throws when absent.
     const std::string& meta(const std::string& key) const;
@@ -142,10 +142,10 @@ class ReferenceSnapshot {
     bool has(Stage stage) const;
 
     const std::map<std::string, Tensor>& tensors() const {
-        return tensors_;
+        return tensor_entries;
     }
     bool has_tensor(const std::string& name) const {
-        return tensors_.count(name) != 0;
+        return tensor_entries.count(name) != 0;
     }
     /// Throws when the tensor is absent.
     const Tensor& tensor(const std::string& name) const;
@@ -155,9 +155,9 @@ class ReferenceSnapshot {
   private:
     ReferenceSnapshot() = default;
 
-    std::vector<std::uint8_t> bytes_;
-    std::map<std::string, std::string> metadata_;
-    std::map<std::string, Tensor> tensors_;
+    std::vector<std::uint8_t> bytes;
+    std::map<std::string, std::string> metadata_entries;
+    std::map<std::string, Tensor> tensor_entries;
 };
 
 /// `$CCTAG_REFERENCE_SNAPSHOTS` when set and non-empty: the directory of reference snapshots,

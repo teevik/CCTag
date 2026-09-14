@@ -19,16 +19,16 @@
 
 namespace cctag::portable::cpu {
 
-/// Holds one pyramid level's buffers.
+/// Holds one pyramid level's buffers
 struct Buffers {
     std::uint32_t width = 0;
     std::uint32_t height = 0;
 
-    /// Source grayscale image.
+    /// Source grayscale image
     cv::Mat1b src;
-    /// Horizontal gradient/derivative.
+    /// Horizontal gradients
     cv::Mat1s dx;
-    /// Vertical gradient/derivative.
+    /// Vertical gradients
     cv::Mat1s dy;
 
     Buffers() = default;
@@ -54,11 +54,11 @@ struct Buffers {
 struct Backend {
     using Buffers = cpu::Buffers;
 
-    /// Copies the input image into level 0.
+    /// Copies the input grayscale image into `level0.src`
     static void load(Buffers& level0, kernels::Plane<const std::uint8_t> input);
-    /// `src` of `coarser` from `src` of `finer`.
+    /// Downsamples `finer.src` into `coarser.src` to build the next pyramid level
     static void pyramid(Buffers& coarser, const Buffers& finer);
-    /// `src` -> `dx`, `dy`.
+    /// Computes horizontal (`dx`) and vertical (`dy`) gradients from `src`
     static void gradient(Buffers& level);
 
     static PyramidHost host_pyramid(Buffers& level);

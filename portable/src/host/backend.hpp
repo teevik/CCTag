@@ -17,7 +17,7 @@
 
 namespace cctag::portable {
 
-/// Interface for an CCTag execution backend.
+/// Interface for a CCTag execution backend
 template <class B>
 concept ExecutionBackend = requires(
     typename B::Buffers& level,
@@ -27,18 +27,19 @@ concept ExecutionBackend = requires(
     std::uint32_t w,
     std::uint32_t h
 ) {
-    // Sizes one level's buffers; a no-op when the size is unchanged.
+    // Ensures this level's buffers have dimensions `w` by `h`, no-op if unchanged
     { level.ensure(w, h) };
-    // Copies the input image into level 0: the only place the pipeline reads caller memory.
+    // Copies the input grayscale image into `level.src` at pyramid level 0
     { B::load(level, input) };
-    // `src` of `level` from `src` of the next finer level.
+    // Downsamples `finer.src` into `level.src` to build the next pyramid level
     { B::pyramid(level, finer) };
-    // `src` -> `dx`, `dy`.
+    // Computes horizontal (`dx`) and vertical (`dy`) gradients from `src`
     { B::gradient(level) };
-    // Host views of the stages' outputs; `pyramid` and `load` share one.
+    // Returns a read-only view of `src`, produced by `load` or `pyramid`
     { B::host_pyramid(level) } -> std::same_as<PyramidHost>;
+    // Returns read-only views of `dx` and `dy`, produced by `gradient`
     { B::host_gradient(level) } -> std::same_as<GradientHost>;
-    // Blocks until every stage call so far has completed; a no-op on the CPU.
+    // Waits for all previously submitted stages to finish
     { B::wait(context) };
 };
 

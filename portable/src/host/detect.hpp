@@ -20,34 +20,34 @@
 
 namespace cctag::portable {
 
-/// Times a stage using the probe's `enter` and `leave` callbacks.
+/// Times a stage using the probe's `enter` and `leave` callbacks
 template <ExecutionBackend Backend>
 class StageTiming {
   public:
     StageTiming(Context<Backend>& context, Probe* probe, const char* stage) :
-        context_(context),
-        probe_(probe),
-        stage_(stage) {
-        if (probe_) {
-            probe_->enter(stage_);
+        context(context),
+        probe(probe),
+        stage(stage) {
+        if (probe) {
+            probe->enter(stage);
         }
     }
     ~StageTiming() {
-        if (probe_) {
-            Backend::wait(context_);
-            probe_->leave(stage_);
+        if (probe) {
+            Backend::wait(context);
+            probe->leave(stage);
         }
     }
     StageTiming(const StageTiming&) = delete;
     StageTiming& operator=(const StageTiming&) = delete;
 
   private:
-    Context<Backend>& context_;
-    Probe* probe_;
-    const char* stage_;
+    Context<Backend>& context;
+    Probe* probe;
+    const char* stage;
 };
 
-/// Runs a CCTag detection pipeline.
+/// Runs a CCTag detection pipeline
 template <ExecutionBackend Backend>
 void detect(
     Context<Backend>& context,
@@ -59,7 +59,7 @@ void detect(
     auto& levels = context.levels;
     const std::uint32_t count = static_cast<std::uint32_t>(levels.size());
 
-    // Phase A: Run the stages. The pyramid is chained level by level and stays in backend memory
+    // Pyramid stage
     {
         StageTiming<Backend> timing(context, probe, "pyramid");
         Backend::load(levels[0], input);
@@ -67,6 +67,7 @@ void detect(
             Backend::pyramid(levels[level], levels[level - 1]);
         }
     }
+    // Gradient stage
     {
         StageTiming<Backend> timing(context, probe, "gradient");
         for (std::uint32_t level = 0; level < count; ++level) {
@@ -74,7 +75,7 @@ void detect(
         }
     }
 
-    // Phase B: observe the results and give them to the probe
+    // Observe results if probe is enabled
     if (probe) {
         for (std::uint32_t level = 0; level < count; ++level) {
             const PyramidHost pyramid = Backend::host_pyramid(levels[level]);

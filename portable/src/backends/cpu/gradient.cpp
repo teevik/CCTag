@@ -24,7 +24,9 @@ cv::Mat1f derivative_kernel() {
     return kernel;
 }
 
+/// Horizontal derivative kernel
 const cv::Mat1f kKernelDx = derivative_kernel();
+/// Vertical derivative kernel
 const cv::Mat1f kKernelDy = kKernelDx.t();
 
 } // namespace

@@ -5,7 +5,6 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/.
  */
-// The `pyramid` stage: the input copied into level 0, then each coarser level using `cv::resize`
 #include "backends/cpu/backend.hpp"
 
 #include <opencv2/imgproc.hpp>
