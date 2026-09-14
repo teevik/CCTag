@@ -32,8 +32,8 @@ concept ExecutionBackend = requires(
     std::uint32_t w,
     std::uint32_t h
 ) {
-    // Sizes this level's buffers to `w` by `h`, reusing storage if unchanged
-    { level.ensure(w, h) };
+    // Sizes this level's buffers, also retaining the input image's bounds for descent
+    { level.ensure(w, h, input.width, input.height) };
     // Copies the input grayscale image into `level.src` at pyramid level 0
     { B::load(level, input) };
     // Downsamples `finer.src` into `level.src` to build the next pyramid level
@@ -44,6 +44,8 @@ concept ExecutionBackend = requires(
     { B::edges(level, params) };
     // Compacts edges into the edge-point collection and rewrites the edge map
     { B::edge_points(level) };
+    // Links edge points and gathers their votes into the vote graph
+    { B::vote(level, params) };
     // Returns a read-only host view of `src`, produced by `load` or `pyramid`
     { B::host_pyramid(level) } -> std::same_as<PyramidHost>;
     // Returns read-only host views of `dx` and `dy`, produced by `gradient`
@@ -52,6 +54,8 @@ concept ExecutionBackend = requires(
     { B::host_edges(level) } -> std::same_as<EdgesHost>;
     // Returns a read-only host view of the edge-point collection in canonical order
     { B::host_edge_points(level) } -> std::same_as<EdgePointsHost>;
+    // Returns a read-only host view of the vote graph and ownership-resolution order
+    { B::host_vote(level) } -> std::same_as<VoteHost>;
     // Waits for all previously submitted stages to finish
     { B::wait(context) };
 };

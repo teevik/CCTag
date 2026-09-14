@@ -40,6 +40,17 @@ struct EdgePointsHost {
     std::span<const float> gradients;
 };
 
+/// Read-only host view of one pyramid level's vote graph
+struct VoteHost {
+    std::span<const std::int32_t> links;
+    std::span<const std::int32_t> voters_offsets;
+    std::span<const std::int32_t> voters_values;
+    std::span<const std::int32_t> is_max;
+    std::span<const float> flow_length;
+    std::span<const std::int32_t> seeds;
+    std::span<const std::int32_t> seed_order;
+};
+
 /// Converts a plane to the probe's format, with the row stride in bytes
 template <class T>
 inline cctag::Plane probe_plane(kernels::Plane<const T> plane) {

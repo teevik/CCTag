@@ -11,9 +11,16 @@
 
 namespace cctag::portable::cpu {
 
-void Buffers::ensure(std::uint32_t level_width, std::uint32_t level_height) {
+void Buffers::ensure(
+    std::uint32_t level_width,
+    std::uint32_t level_height,
+    std::uint32_t image_width,
+    std::uint32_t image_height
+) {
     width = level_width;
     height = level_height;
+    input_width = image_width == 0 ? width : image_width;
+    input_height = image_height == 0 ? height : image_height;
     const int rows = static_cast<int>(height);
     const int cols = static_cast<int>(width);
 
@@ -43,6 +50,16 @@ void Buffers::ensure(std::uint32_t level_width, std::uint32_t level_height) {
     xy.reserve(2 * max_points);
     gradients.reserve(2 * max_points);
     row_offsets.resize(height);
+    links.reserve(2 * max_points);
+    voters_offsets.reserve(max_points + 1);
+    voters_values.reserve(max_points);
+    is_max.reserve(max_points);
+    flow_length.reserve(max_points);
+    seeds.reserve(max_points);
+    seed_order.reserve(max_points);
+    voted_for.reserve(max_points);
+    vote_distance.reserve(max_points);
+    voter_cursors.reserve(max_points);
 }
 
 } // namespace cctag::portable::cpu

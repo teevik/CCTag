@@ -92,6 +92,14 @@ void detect(
         }
     }
 
+    // Link edge points and gather their votes at every pyramid level
+    {
+        StageTiming<Backend> timing(context, probe, "vote");
+        for (std::uint32_t level = 0; level < count; ++level) {
+            Backend::vote(levels[level], params);
+        }
+    }
+
     // Observe host views after all stages, outside the stage timings
     if (probe) {
         for (std::uint32_t level = 0; level < count; ++level) {
@@ -105,6 +113,19 @@ void detect(
             probe->edge_points(
                 level,
                 cctag::EdgePointsView{points.n, points.xy.data(), points.gradients.data()}
+            );
+            const VoteHost vote = Backend::host_vote(levels[level]);
+            probe->vote(
+                level,
+                cctag::VoteView{
+                    vote.links.data(),
+                    vote.voters_offsets.data(),
+                    vote.voters_values.data(),
+                    vote.is_max.data(),
+                    vote.flow_length.data(),
+                    static_cast<std::uint32_t>(vote.seed_order.size()),
+                    vote.seed_order.data()
+                }
             );
         }
     }
@@ -173,6 +194,47 @@ struct RecordingProbe : cctag::Probe {
             "edge_points/level" + std::to_string(level) + "/gradients",
             {2, points.point_count, 2 * sizeof(float), points.gradients},
             sizeof(float)
+        );
+    }
+
+    void vote(std::uint32_t level, const cctag::VoteView& vote) override {
+        const auto n = static_cast<std::uint32_t>(
+            tensors.at("edge_points/level" + std::to_string(level) + "/xy").size()
+            / (2 * sizeof(std::int32_t))
+        );
+        const auto prefix = "vote/level" + std::to_string(level) + "/";
+        record(
+            prefix + "links",
+            {2, n, 2 * sizeof(std::int32_t), vote.linked_point_indices},
+            sizeof(std::int32_t)
+        );
+        record(
+            prefix + "voters/offsets",
+            {1, n + 1, sizeof(std::int32_t), vote.voter_offsets},
+            sizeof(std::int32_t)
+        );
+        record(
+            prefix + "voters/values",
+            {1,
+             static_cast<std::uint32_t>(vote.voter_offsets[n]),
+             sizeof(std::int32_t),
+             vote.voter_point_indices},
+            sizeof(std::int32_t)
+        );
+        record(
+            prefix + "is_max",
+            {1, n, sizeof(std::int32_t), vote.seed_vote_counts},
+            sizeof(std::int32_t)
+        );
+        record(
+            prefix + "flow_length",
+            {1, n, sizeof(float), vote.mean_flow_lengths},
+            sizeof(float)
+        );
+        record(
+            prefix + "seed_order",
+            {1, vote.seed_count, sizeof(std::int32_t), vote.seed_point_indices},
+            sizeof(std::int32_t)
         );
     }
 
@@ -260,12 +322,12 @@ inline suite<"host_sequence"> host_sequence_suite = [] {
         expect(probe.tensors.at("pyramid/level0/src") == image);
     };
 
-    "probe observes pyramid gradient edges and edge points at every level"_test = [] {
+    "probe observes stages through vote at every level"_test = [] {
         const std::uint32_t w = 37, h = 23;
         Context<cpu::Backend> context;
         const RecordingProbe probe = run(context, test_image(w, h), w, h);
-        // `src`, `dx`, `dy`, `edges`, `xy` and `gradients` at each of 4 levels
-        expect(eq(probe.tensors.size(), 24u));
+        // Six tensors through edge_points and six from vote at each of 4 levels
+        expect(eq(probe.tensors.size(), 48u));
         for (std::uint32_t level = 0; level < context.levels.size(); ++level) {
             expect(eq(probe.tensors.count("pyramid/level" + std::to_string(level) + "/src"), 1u))
                 << "src at level" << level;
@@ -282,10 +344,22 @@ inline suite<"host_sequence"> host_sequence_suite = [] {
                    1u)
             ) << "edge point gradients at level"
               << level;
+            for (const auto* name :
+                 {"links",
+                  "voters/offsets",
+                  "voters/values",
+                  "is_max",
+                  "flow_length",
+                  "seed_order"}) {
+                expect(
+                    eq(probe.tensors.count("vote/level" + std::to_string(level) + "/" + name), 1u)
+                ) << name
+                  << "at level" << level;
+            }
         }
     };
 
-    "probe receives pyramid then gradient then edges then edge points timing events"_test = [] {
+    "probe receives timing events in stage order through vote"_test = [] {
         const std::uint32_t w = 37, h = 23;
         Context<cpu::Backend> context;
         const RecordingProbe probe = run(context, test_image(w, h), w, h);
@@ -297,7 +371,9 @@ inline suite<"host_sequence"> host_sequence_suite = [] {
             "enter edges",
             "leave edges",
             "enter edge_points",
-            "leave edge_points"
+            "leave edge_points",
+            "enter vote",
+            "leave vote"
         };
         expect(probe.timing == expected);
     };

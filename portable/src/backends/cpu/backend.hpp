@@ -26,6 +26,9 @@ inline constexpr std::uint32_t kMaxEdgePoints = 1u << 24;
 struct Buffers {
     std::uint32_t width = 0;
     std::uint32_t height = 0;
+    /// Descent uses the input image's bounds at every pyramid level
+    std::uint32_t input_width = 0;
+    std::uint32_t input_height = 0;
 
     /// Source grayscale image
     cv::Mat1b src;
@@ -45,6 +48,22 @@ struct Buffers {
     /// Per-row counts, replaced by exclusive offsets before scattering edge points
     std::vector<std::uint32_t> row_offsets;
 
+    /// Vote graph in snapshot layout, with interleaved (before, after) links
+    std::vector<std::int32_t> links;
+    std::vector<std::int32_t> voters_offsets;
+    std::vector<std::int32_t> voters_values;
+    std::vector<std::int32_t> is_max;
+    std::vector<float> flow_length;
+    /// Seed set in canonical order and seeds in ownership-resolution order
+    std::vector<std::int32_t> seeds;
+    std::vector<std::int32_t> seed_order;
+    /// Each point's chosen seed and total flow distance
+    std::vector<std::int32_t> voted_for;
+    std::vector<float> vote_distance;
+    /// Per-point sub-segment distances and per-row cursors for the voter CSR
+    std::vector<float> vote_segments;
+    std::vector<std::int32_t> voter_cursors;
+
     /// Magnitudes and NMS classes, each with a zero border outside the image
     cv::Mat1i magnitude;
     cv::Mat1b nms_class;
@@ -59,7 +78,12 @@ struct Buffers {
     Buffers(const Buffers&) = delete;
     Buffers& operator=(const Buffers&) = delete;
 
-    void ensure(std::uint32_t level_width, std::uint32_t level_height);
+    void ensure(
+        std::uint32_t level_width,
+        std::uint32_t level_height,
+        std::uint32_t image_width = 0,
+        std::uint32_t image_height = 0
+    );
 
     kernels::Plane<std::uint8_t> src_plane() {
         return {src[0], width, height, src.step1()};
@@ -89,11 +113,14 @@ struct Backend {
     static void edges(Buffers& level, const Parameters& params);
     /// Compacts edges into the edge-point collection and rewrites the edge map
     static void edge_points(Buffers& level);
+    /// Links edge points and gathers their votes into the vote graph
+    static void vote(Buffers& level, const Parameters& params);
 
     static PyramidHost host_pyramid(Buffers& level);
     static GradientHost host_gradient(Buffers& level);
     static EdgesHost host_edges(Buffers& level);
     static EdgePointsHost host_edge_points(Buffers& level);
+    static VoteHost host_vote(Buffers& level);
 
     static void wait(Context<Backend>&) {}
 };

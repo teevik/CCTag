@@ -45,7 +45,7 @@ struct Context {
         std::uint32_t level_width = input_width;
         std::uint32_t level_height = input_height;
         for (auto& level : levels) {
-            level.ensure(level_width, level_height);
+            level.ensure(level_width, level_height, input_width, input_height);
             level_width /= 2;
             level_height /= 2;
         }

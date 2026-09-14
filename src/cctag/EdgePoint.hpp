@@ -87,7 +87,9 @@ static_assert(sizeof(EdgePoint) == 8+16+16, "EdgePoint not packed");
 
 inline bool receivedMoreVoteThan(const EdgePoint * const p1,  const EdgePoint * const p2)
 {
-  return (p1->_isMax > p2->_isMax);
+  return (p1->_isMax > p2->_isMax) ||
+         (p1->_isMax == p2->_isMax &&
+          (p1->y() < p2->y() || (p1->y() == p2->y() && p1->x() < p2->x())));
 }
 
 } // namespace cctag

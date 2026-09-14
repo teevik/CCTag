@@ -130,6 +130,31 @@ int main(int argc, const char** argv) {
                 }
             }
         };
+        "vote matches reference snapshot from reference edge points"_test = [] {
+            for (const auto& file : snapshot_files_or_fail()) {
+                const ReferenceSnapshot snapshot = ReferenceSnapshot::read(file);
+                Context<cpu::Backend> context;
+                fill_context(snapshot, Stage::edge_points, context);
+                const cctag::Parameters params(snapshot.crowns());
+                for (std::uint32_t level = 0; level < context.levels.size(); ++level) {
+                    cpu::Backend::vote(context.levels[level], params);
+                    const VoteHost vote = cpu::Backend::host_vote(context.levels[level]);
+                    const auto compare = [&](const char* name, auto values) {
+                        const Tensor& expected = snapshot.tensor(Stage::vote, level, name);
+                        const Mismatch mismatch = compare_values(expected, values);
+                        expect(mismatch.exact())
+                            << snapshot.problem() << describe(expected, mismatch);
+                    };
+                    compare("links", vote.links);
+                    compare("voters/offsets", vote.voters_offsets);
+                    compare("voters/values", vote.voters_values);
+                    compare("is_max", vote.is_max);
+                    compare("flow_length", vote.flow_length);
+                    compare("seeds", vote.seeds);
+                    compare("seed_order", vote.seed_order);
+                }
+            }
+        };
     };
     return cfg<override>.run({.argc = argc, .argv = argv});
 }

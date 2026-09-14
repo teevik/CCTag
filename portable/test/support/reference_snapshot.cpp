@@ -338,8 +338,19 @@ void fill_level(
     if (upto == Stage::edge_points) {
         return;
     }
+    buffers.links = snapshot.tensor(Stage::vote, level, "links").as<std::int32_t>();
+    buffers.voters_offsets =
+        snapshot.tensor(Stage::vote, level, "voters/offsets").as<std::int32_t>();
+    buffers.voters_values = snapshot.tensor(Stage::vote, level, "voters/values").as<std::int32_t>();
+    buffers.is_max = snapshot.tensor(Stage::vote, level, "is_max").as<std::int32_t>();
+    buffers.flow_length = snapshot.tensor(Stage::vote, level, "flow_length").as<float>();
+    buffers.seeds = snapshot.tensor(Stage::vote, level, "seeds").as<std::int32_t>();
+    buffers.seed_order = snapshot.tensor(Stage::vote, level, "seed_order").as<std::int32_t>();
+    if (upto == Stage::vote) {
+        return;
+    }
     throw std::logic_error(
-        std::string("fill_level: the stage buffers stop at edge_points; add the fill for ")
+        std::string("fill_level: the stage buffers stop at vote; add the fill for ")
         + stage_name(upto) + " together with its buffers"
     );
 }
@@ -482,7 +493,7 @@ inline suite<"snapshot_support"> snapshot_support_suite = [] {
         expect(buffers.gradients == std::vector<float>{-1.f, 2.f});
         expect(eq(buffers.edge_map(0, 0), -1));
         expect(eq(buffers.edge_map(0, 1), 0));
-        expect(throws<std::logic_error>([&] {
+        expect(throws<std::runtime_error>([&] {
             (void)fill_level(snapshot, 0, Stage::vote, buffers);
         }));
 
@@ -496,6 +507,46 @@ inline suite<"snapshot_support"> snapshot_support_suite = [] {
                 fill_level(invalid, 0, Stage::edge_points, buffers);
             }));
         }
+    };
+
+    "fills the vote graph and preserves the stored seed order"_test = [] {
+        const std::string header =
+            R"({"pyramid/level0/src":{"dtype":"U8","shape":[1,2],"data_offsets":[0,2]},)"
+            R"("gradient/level0/dx":{"dtype":"I16","shape":[1,2],"data_offsets":[2,6]},)"
+            R"("gradient/level0/dy":{"dtype":"I16","shape":[1,2],"data_offsets":[6,10]},)"
+            R"("edges/level0/edges":{"dtype":"U8","shape":[1,2],"data_offsets":[10,12]},)"
+            R"("edge_points/level0/xy":{"dtype":"I32","shape":[2,2],"data_offsets":[12,28]},)"
+            R"("edge_points/level0/gradients":{"dtype":"F32","shape":[2,2],"data_offsets":[28,44]},)"
+            R"("vote/level0/links":{"dtype":"I32","shape":[2,2],"data_offsets":[44,60]},)"
+            R"("vote/level0/voters/offsets":{"dtype":"I32","shape":[3],"data_offsets":[60,72]},)"
+            R"("vote/level0/voters/values":{"dtype":"I32","shape":[2],"data_offsets":[72,80]},)"
+            R"("vote/level0/is_max":{"dtype":"I32","shape":[2],"data_offsets":[80,88]},)"
+            R"("vote/level0/flow_length":{"dtype":"F32","shape":[2],"data_offsets":[88,96]},)"
+            R"("vote/level0/seeds":{"dtype":"I32","shape":[2],"data_offsets":[96,104]},)"
+            R"("vote/level0/seed_order":{"dtype":"I32","shape":[2],"data_offsets":[104,112]},)"
+            R"("__metadata__":{"schema_version":"1"}})";
+        std::vector<std::uint8_t> data = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 255, 255};
+        // Hand-built little-endian words: coordinates, gradients, then the seven vote tensors
+        for (const std::uint32_t word :
+             {0u, 0u,          1u,          0u, 0u, 0u, 0u, 0u, 0xffffffffu,
+              1u, 0u,          0xffffffffu, 0u, 1u, 2u, 1u, 0u, 1u,
+              1u, 0x3fc00000u, 0x40200000u, 0u, 1u, 1u, 0u}) {
+            for (int byte = 0; byte < 4; ++byte) {
+                data.push_back(static_cast<std::uint8_t>(word >> (8 * byte)));
+            }
+        }
+        const ReferenceSnapshot snapshot = ReferenceSnapshot::from_bytes(safetensors(header, data));
+        cpu::Buffers buffers;
+        buffers.ensure(2, 1);
+        fill_level(snapshot, 0, Stage::vote, buffers);
+        expect(buffers.links == std::vector<std::int32_t>{-1, 1, 0, -1});
+        expect(buffers.voters_offsets == std::vector<std::int32_t>{0, 1, 2});
+        expect(buffers.voters_values == std::vector<std::int32_t>{1, 0});
+        expect(buffers.is_max == std::vector<std::int32_t>{1, 1});
+        expect(buffers.flow_length == std::vector<float>{1.5f, 2.5f});
+        expect(buffers.seeds == std::vector<std::int32_t>{0, 1});
+        expect(buffers.seed_order == std::vector<std::int32_t>{1, 0});
+        expect(throws<std::logic_error>([&] { fill_level(snapshot, 0, Stage::linking, buffers); }));
     };
 
     "fills an empty edge point collection and removes the previous edge map"_test = [] {

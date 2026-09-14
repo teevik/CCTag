@@ -87,7 +87,7 @@ inline std::uint8_t thinning_at(
     const auto* up = input.row(y - 1);
     const auto* middle = input.row(y);
     const auto* down = input.row(y + 1);
-    // The legacy tables number the neighbourhood in column-major order
+    // The lookup tables number the neighbourhood in column-major order
     const int index = (up[x - 1] == 255) + (middle[x - 1] == 255) * 2 + (down[x - 1] == 255) * 4
         + (up[x] == 255) * 8 + (middle[x] == 255) * 16 + (down[x] == 255) * 32
         + (up[x + 1] == 255) * 64 + (middle[x + 1] == 255) * 128 + (down[x + 1] == 255) * 256;
