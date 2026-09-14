@@ -314,8 +314,32 @@ void fill_level(
     if (upto == Stage::edges) {
         return;
     }
+    const Tensor& xy = snapshot.tensor(Stage::edge_points, level, "xy");
+    const Tensor& gradients = snapshot.tensor(Stage::edge_points, level, "gradients");
+    if (xy.shape.size() != 2 || xy.shape[1] != 2 || xy.shape[0] > cpu::kMaxEdgePoints
+        || gradients.shape != xy.shape) {
+        throw std::runtime_error("edge_points: expected matching [n, 2] coordinates and gradients");
+    }
+    buffers.xy = xy.as<std::int32_t>();
+    buffers.gradients = gradients.as<float>();
+    buffers.n = static_cast<std::uint32_t>(xy.shape[0]);
+
+    // The edge map is not captured; restore it from the reference's canonical coordinates
+    buffers.edge_map.setTo(-1);
+    for (std::uint32_t index = 0; index < buffers.n; ++index) {
+        const auto x = buffers.xy[2 * index];
+        const auto y = buffers.xy[2 * index + 1];
+        if (x < 0 || y < 0 || static_cast<std::uint32_t>(x) >= buffers.width
+            || static_cast<std::uint32_t>(y) >= buffers.height) {
+            throw std::runtime_error("edge_points: coordinate outside the pyramid level");
+        }
+        buffers.edge_map(y, x) = static_cast<std::int32_t>(index);
+    }
+    if (upto == Stage::edge_points) {
+        return;
+    }
     throw std::logic_error(
-        std::string("fill_level: the stage buffers stop at edges; add the fill for ")
+        std::string("fill_level: the stage buffers stop at edge_points; add the fill for ")
         + stage_name(upto) + " together with its buffers"
     );
 }
@@ -433,24 +457,69 @@ inline suite<"snapshot_support"> snapshot_support_suite = [] {
         }));
     };
 
-    "fills edge planes from reference snapshot bytes"_test = [] {
+    "fills edge planes and edge point collections from reference snapshot bytes"_test = [] {
         const std::string header =
             R"({"pyramid/level0/src":{"dtype":"U8","shape":[1,2],"data_offsets":[0,2]},)"
             R"("gradient/level0/dx":{"dtype":"I16","shape":[1,2],"data_offsets":[2,6]},)"
             R"("gradient/level0/dy":{"dtype":"I16","shape":[1,2],"data_offsets":[6,10]},)"
             R"("edges/level0/edges":{"dtype":"U8","shape":[1,2],"data_offsets":[10,12]},)"
+            R"("edge_points/level0/xy":{"dtype":"I32","shape":[1,2],"data_offsets":[12,20]},)"
+            R"("edge_points/level0/gradients":{"dtype":"F32","shape":[1,2],"data_offsets":[20,28]},)"
             R"("__metadata__":{"schema_version":"1"}})";
-        const ReferenceSnapshot snapshot = ReferenceSnapshot::from_bytes(
-            safetensors(header, {3, 4, 0, 0, 0, 0, 0, 0, 0, 0, 0, 255})
-        );
+        const std::vector<std::uint8_t> data = {3, 4, 0, 0, 0, 0, 0, 0, 0,   0,   0, 255, 1, 0,
+                                                0, 0, 0, 0, 0, 0, 0, 0, 128, 191, 0, 0,   0, 64};
+        const ReferenceSnapshot snapshot = ReferenceSnapshot::from_bytes(safetensors(header, data));
         cpu::Buffers buffers;
         buffers.ensure(2, 1);
         fill_level(snapshot, 0, Stage::edges, buffers);
         expect(eq(buffers.edges(0, 0), 0));
         expect(eq(buffers.edges(0, 1), 255));
+        buffers.edge_map.setTo(7);
+        fill_level(snapshot, 0, Stage::edge_points, buffers);
+        expect(eq(buffers.n, 1u));
+        expect(buffers.xy == std::vector<std::int32_t>{1, 0});
+        // These differ from the gradient planes: the loader must copy, not recompute
+        expect(buffers.gradients == std::vector<float>{-1.f, 2.f});
+        expect(eq(buffers.edge_map(0, 0), -1));
+        expect(eq(buffers.edge_map(0, 1), 0));
         expect(throws<std::logic_error>([&] {
-            (void)fill_level(snapshot, 0, Stage::edge_points, buffers);
+            (void)fill_level(snapshot, 0, Stage::vote, buffers);
         }));
+
+        // Reject coordinates outside either axis before indexing the edge map
+        for (const std::size_t offset : {12u, 16u}) {
+            auto outside = data;
+            outside[offset] = 2;
+            const ReferenceSnapshot invalid =
+                ReferenceSnapshot::from_bytes(safetensors(header, outside));
+            expect(throws<std::runtime_error>([&] {
+                fill_level(invalid, 0, Stage::edge_points, buffers);
+            }));
+        }
+    };
+
+    "fills an empty edge point collection and removes the previous edge map"_test = [] {
+        const std::string header =
+            R"({"pyramid/level0/src":{"dtype":"U8","shape":[1,1],"data_offsets":[0,1]},)"
+            R"("gradient/level0/dx":{"dtype":"I16","shape":[1,1],"data_offsets":[1,3]},)"
+            R"("gradient/level0/dy":{"dtype":"I16","shape":[1,1],"data_offsets":[3,5]},)"
+            R"("edges/level0/edges":{"dtype":"U8","shape":[1,1],"data_offsets":[5,6]},)"
+            R"("edge_points/level0/xy":{"dtype":"I32","shape":[0,2],"data_offsets":[6,6]},)"
+            R"("edge_points/level0/gradients":{"dtype":"F32","shape":[0,2],"data_offsets":[6,6]},)"
+            R"("__metadata__":{"schema_version":"1"}})";
+        const ReferenceSnapshot snapshot =
+            ReferenceSnapshot::from_bytes(safetensors(header, {0, 0, 0, 0, 0, 0}));
+        cpu::Buffers buffers;
+        buffers.ensure(1, 1);
+        buffers.n = 1;
+        buffers.xy = {0, 0};
+        buffers.gradients = {1.f, -1.f};
+        buffers.edge_map.setTo(0);
+        fill_level(snapshot, 0, Stage::edge_points, buffers);
+        expect(eq(buffers.n, 0u));
+        expect(buffers.xy.empty());
+        expect(buffers.gradients.empty());
+        expect(eq(buffers.edge_map(0, 0), -1));
     };
 
     "fills stage buffers and reports exact plane mismatches"_test = [] {

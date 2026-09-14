@@ -88,7 +88,9 @@ struct Tensor {
     std::vector<T> as() const {
         expect_dtype(dtype_of<T>());
         std::vector<T> values(elements());
-        std::memcpy(values.data(), bytes.data(), bytes.size());
+        if (!values.empty()) {
+            std::memcpy(values.data(), bytes.data(), bytes.size());
+        }
         return values;
     }
 
@@ -182,7 +184,7 @@ void copy_plane(const Tensor& reference, kernels::Plane<T> plane) {
 }
 
 /// Fills one level's stage buffers with reference outputs through `upto`, inclusive
-/// Requires buffers sized by `Buffers::ensure` and supports `pyramid` and `gradient`
+/// Requires buffers sized by `Buffers::ensure` and supports stages through `edge_points`
 void fill_level(
     const ReferenceSnapshot& snapshot,
     std::uint32_t level,

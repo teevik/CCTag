@@ -42,12 +42,16 @@ concept ExecutionBackend = requires(
     { B::gradient(level) };
     // Finds and thins edges from `dx` and `dy`
     { B::edges(level, params) };
+    // Compacts edges into the edge-point collection and rewrites the edge map
+    { B::edge_points(level) };
     // Returns a read-only host view of `src`, produced by `load` or `pyramid`
     { B::host_pyramid(level) } -> std::same_as<PyramidHost>;
     // Returns read-only host views of `dx` and `dy`, produced by `gradient`
     { B::host_gradient(level) } -> std::same_as<GradientHost>;
     // Returns a read-only host view of the thinned edges
     { B::host_edges(level) } -> std::same_as<EdgesHost>;
+    // Returns a read-only host view of the edge-point collection in canonical order
+    { B::host_edge_points(level) } -> std::same_as<EdgePointsHost>;
     // Waits for all previously submitted stages to finish
     { B::wait(context) };
 };

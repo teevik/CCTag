@@ -13,6 +13,7 @@
 #include <cctag/Probe.hpp>
 
 #include <cstdint>
+#include <span>
 
 namespace cctag::portable {
 
@@ -30,6 +31,13 @@ struct GradientHost {
 /// Read-only host view of one pyramid level's thinned edges
 struct EdgesHost {
     kernels::Plane<const std::uint8_t> edges;
+};
+
+/// Read-only host view of one pyramid level's edge-point collection in canonical order
+struct EdgePointsHost {
+    std::uint32_t n;
+    std::span<const std::int32_t> xy;
+    std::span<const float> gradients;
 };
 
 /// Converts a plane to the probe's format, with the row stride in bytes

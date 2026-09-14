@@ -108,6 +108,28 @@ int main(int argc, const char** argv) {
                 }
             }
         };
+        "edge points match reference snapshot from reference edges"_test = [] {
+            for (const auto& file : snapshot_files_or_fail()) {
+                const ReferenceSnapshot snapshot = ReferenceSnapshot::read(file);
+                Context<cpu::Backend> context;
+                fill_context(snapshot, Stage::edges, context);
+                auto& levels = context.levels;
+                for (std::uint32_t level = 0; level < levels.size(); ++level) {
+                    cpu::Backend::edge_points(levels[level]);
+                    const EdgePointsHost points = cpu::Backend::host_edge_points(levels[level]);
+                    const Tensor& xy = snapshot.tensor(Stage::edge_points, level, "xy");
+                    const Tensor& gradients =
+                        snapshot.tensor(Stage::edge_points, level, "gradients");
+                    expect(eq(points.n, xy.shape[0])) << snapshot.problem() << "level" << level;
+                    const Mismatch xy_mismatch = compare_values<std::int32_t>(xy, points.xy);
+                    const Mismatch gradient_mismatch =
+                        compare_values<float>(gradients, points.gradients);
+                    expect(xy_mismatch.exact()) << snapshot.problem() << describe(xy, xy_mismatch);
+                    expect(gradient_mismatch.exact())
+                        << snapshot.problem() << describe(gradients, gradient_mismatch);
+                }
+            }
+        };
     };
     return cfg<override>.run({.argc = argc, .argv = argv});
 }

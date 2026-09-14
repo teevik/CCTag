@@ -84,6 +84,14 @@ void detect(
         }
     }
 
+    // Collect edge points in canonical order at every pyramid level
+    {
+        StageTiming<Backend> timing(context, probe, "edge_points");
+        for (std::uint32_t level = 0; level < count; ++level) {
+            Backend::edge_points(levels[level]);
+        }
+    }
+
     // Observe host views after all stages, outside the stage timings
     if (probe) {
         for (std::uint32_t level = 0; level < count; ++level) {
@@ -93,6 +101,11 @@ void detect(
             probe->gradient(level, probe_plane(gradient.dx), probe_plane(gradient.dy));
             const EdgesHost edges = Backend::host_edges(levels[level]);
             probe->edges(level, probe_plane(edges.edges));
+            const EdgePointsHost points = Backend::host_edge_points(levels[level]);
+            probe->edge_points(
+                level,
+                cctag::EdgePointsView{points.n, points.xy.data(), points.gradients.data()}
+            );
         }
     }
 }
@@ -148,6 +161,19 @@ struct RecordingProbe : cctag::Probe {
 
     void edges(std::uint32_t level, const cctag::Plane& edges) override {
         record("edges/level" + std::to_string(level) + "/edges", edges, 1);
+    }
+
+    void edge_points(std::uint32_t level, const cctag::EdgePointsView& points) override {
+        record(
+            "edge_points/level" + std::to_string(level) + "/xy",
+            {2, points.point_count, 2 * sizeof(std::int32_t), points.positions_xy},
+            sizeof(std::int32_t)
+        );
+        record(
+            "edge_points/level" + std::to_string(level) + "/gradients",
+            {2, points.point_count, 2 * sizeof(float), points.gradients},
+            sizeof(float)
+        );
     }
 
     void enter(const char* stage) override {
@@ -214,7 +240,7 @@ inline void expect_identical(const RecordingProbe& a, const RecordingProbe& b) {
 }
 
 template <ExecutionBackend Backend>
-void expect_thread_count_does_not_change_pyramid_gradient_or_edges_planes() {
+void expect_thread_count_does_not_change_stage_outputs() {
     const std::uint32_t w = 301, h = 173;
     const auto image = test_image(w, h);
     Context<Backend> context;
@@ -234,11 +260,12 @@ inline suite<"host_sequence"> host_sequence_suite = [] {
         expect(probe.tensors.at("pyramid/level0/src") == image);
     };
 
-    "probe observes pyramid gradient and edges planes at every level"_test = [] {
+    "probe observes pyramid gradient edges and edge points at every level"_test = [] {
         const std::uint32_t w = 37, h = 23;
         Context<cpu::Backend> context;
         const RecordingProbe probe = run(context, test_image(w, h), w, h);
-        expect(eq(probe.tensors.size(), 16u)); // `src`, `dx`, `dy` and `edges` at each of 4 levels
+        // `src`, `dx`, `dy`, `edges`, `xy` and `gradients` at each of 4 levels
+        expect(eq(probe.tensors.size(), 24u));
         for (std::uint32_t level = 0; level < context.levels.size(); ++level) {
             expect(eq(probe.tensors.count("pyramid/level" + std::to_string(level) + "/src"), 1u))
                 << "src at level" << level;
@@ -248,10 +275,17 @@ inline suite<"host_sequence"> host_sequence_suite = [] {
                 << "dy at level" << level;
             expect(eq(probe.tensors.count("edges/level" + std::to_string(level) + "/edges"), 1u))
                 << "edges at level" << level;
+            expect(eq(probe.tensors.count("edge_points/level" + std::to_string(level) + "/xy"), 1u))
+                << "edge point coordinates at level" << level;
+            expect(
+                eq(probe.tensors.count("edge_points/level" + std::to_string(level) + "/gradients"),
+                   1u)
+            ) << "edge point gradients at level"
+              << level;
         }
     };
 
-    "probe receives pyramid then gradient then edges timing events"_test = [] {
+    "probe receives pyramid then gradient then edges then edge points timing events"_test = [] {
         const std::uint32_t w = 37, h = 23;
         Context<cpu::Backend> context;
         const RecordingProbe probe = run(context, test_image(w, h), w, h);
@@ -261,12 +295,14 @@ inline suite<"host_sequence"> host_sequence_suite = [] {
             "enter gradient",
             "leave gradient",
             "enter edges",
-            "leave edges"
+            "leave edges",
+            "enter edge_points",
+            "leave edge_points"
         };
         expect(probe.timing == expected);
     };
 
-    "context reuse does not change pyramid gradient or edges planes"_test = [] {
+    "context reuse does not change stage outputs"_test = [] {
         const std::uint32_t w = 64, h = 48;
         const auto first = test_image(w, h, 1u);
         const auto second = test_image(w, h, 2u);
@@ -279,8 +315,8 @@ inline suite<"host_sequence"> host_sequence_suite = [] {
         expect_identical(expected, third);
     };
 
-    "cpu thread count does not change pyramid gradient or edges planes"_test = [] {
-        expect_thread_count_does_not_change_pyramid_gradient_or_edges_planes<cpu::Backend>();
+    "cpu thread count does not change stage outputs"_test = [] {
+        expect_thread_count_does_not_change_stage_outputs<cpu::Backend>();
     };
 };
 

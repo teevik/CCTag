@@ -7,6 +7,8 @@
  */
 #include "backends/cpu/backend.hpp"
 
+#include <algorithm>
+
 namespace cctag::portable::cpu {
 
 void Buffers::ensure(std::uint32_t level_width, std::uint32_t level_height) {
@@ -20,6 +22,7 @@ void Buffers::ensure(std::uint32_t level_width, std::uint32_t level_height) {
     dx.create(rows, cols);
     dy.create(rows, cols);
     edges.create(rows, cols);
+    edge_map.create(rows, cols);
     magnitude.create(rows + 2, cols + 2);
     nms_class.create(rows + 2, cols + 2);
     thinning.create(rows, cols);
@@ -30,6 +33,16 @@ void Buffers::ensure(std::uint32_t level_width, std::uint32_t level_height) {
     thinning.setTo(0);
     hysteresis_stack.clear();
     hysteresis_stack.reserve(static_cast<std::size_t>(width) * height);
+
+    // Reserve for any edge set at this size so later frames reuse the collection
+    const auto max_points =
+        std::min(static_cast<std::size_t>(width) * height, std::size_t{kMaxEdgePoints});
+    n = 0;
+    xy.clear();
+    gradients.clear();
+    xy.reserve(2 * max_points);
+    gradients.reserve(2 * max_points);
+    row_offsets.resize(height);
 }
 
 } // namespace cctag::portable::cpu

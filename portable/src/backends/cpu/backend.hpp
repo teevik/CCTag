@@ -19,6 +19,9 @@
 
 namespace cctag::portable::cpu {
 
+/// Maximum number of edge points in one pyramid level
+inline constexpr std::uint32_t kMaxEdgePoints = 1u << 24;
+
 /// Holds one pyramid level's buffers
 struct Buffers {
     std::uint32_t width = 0;
@@ -32,6 +35,15 @@ struct Buffers {
     cv::Mat1s dy;
     /// Thinned edges, with raw Canny output on the border
     cv::Mat1b edges;
+
+    /// Canonical index at each pixel, or -1 when no edge point is present
+    cv::Mat1i edge_map;
+    /// Edge-point collection in canonical order, with interleaved (x, y) and (dx, dy) pairs
+    std::uint32_t n = 0;
+    std::vector<std::int32_t> xy;
+    std::vector<float> gradients;
+    /// Per-row counts, replaced by exclusive offsets before scattering edge points
+    std::vector<std::uint32_t> row_offsets;
 
     /// Magnitudes and NMS classes, each with a zero border outside the image
     cv::Mat1i magnitude;
@@ -75,10 +87,13 @@ struct Backend {
     static void gradient(Buffers& level);
     /// Finds and thins edges from `dx` and `dy`
     static void edges(Buffers& level, const Parameters& params);
+    /// Compacts edges into the edge-point collection and rewrites the edge map
+    static void edge_points(Buffers& level);
 
     static PyramidHost host_pyramid(Buffers& level);
     static GradientHost host_gradient(Buffers& level);
     static EdgesHost host_edges(Buffers& level);
+    static EdgePointsHost host_edge_points(Buffers& level);
 
     static void wait(Context<Backend>&) {}
 };

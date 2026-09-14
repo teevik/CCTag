@@ -17,7 +17,8 @@ add_library(CCTag
     src/backends/cpu/buffers.cpp
     src/backends/cpu/pyramid.cpp
     src/backends/cpu/gradient.cpp
-    src/backends/cpu/edges.cpp)
+    src/backends/cpu/edges.cpp
+    src/backends/cpu/edge_points.cpp)
 
 find_package(OpenMP REQUIRED COMPONENTS CXX)
 set(THREADS_PREFER_PTHREAD_FLAG ON)
@@ -90,6 +91,7 @@ if(CCTAG_BUILD_TESTS)
   cctag_portable_add_test(unit
       ${unit_test_headers}
       src/backends/cpu/edges.cpp
+      src/backends/cpu/edge_points.cpp
       test/main.cpp
       test/detection_api.cpp
       test/support/reference_snapshot.cpp)
