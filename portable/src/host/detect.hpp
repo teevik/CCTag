@@ -21,6 +21,7 @@
 namespace cctag::portable {
 
 /// Times a stage using the probe's `enter` and `leave` callbacks
+/// Waits for the execution backend to finish before calling `leave`
 template <ExecutionBackend Backend>
 class StageTiming {
   public:
@@ -47,7 +48,7 @@ class StageTiming {
     const char* stage;
 };
 
-/// Runs a CCTag detection pipeline
+/// Runs the portable pipeline's stages across all pyramid levels
 template <ExecutionBackend Backend>
 void detect(
     Context<Backend>& context,
@@ -59,7 +60,7 @@ void detect(
     auto& levels = context.levels;
     const std::uint32_t count = static_cast<std::uint32_t>(levels.size());
 
-    // Pyramid stage
+    // Load level 0 and build each coarser pyramid level
     {
         StageTiming<Backend> timing(context, probe, "pyramid");
         Backend::load(levels[0], input);
@@ -67,7 +68,7 @@ void detect(
             Backend::pyramid(levels[level], levels[level - 1]);
         }
     }
-    // Gradient stage
+    // Compute gradients at every pyramid level
     {
         StageTiming<Backend> timing(context, probe, "gradient");
         for (std::uint32_t level = 0; level < count; ++level) {
@@ -75,7 +76,7 @@ void detect(
         }
     }
 
-    // Observe results if probe is enabled
+    // Observe host views after all stages, outside the stage timings
     if (probe) {
         for (std::uint32_t level = 0; level < count; ++level) {
             const PyramidHost pyramid = Backend::host_pyramid(levels[level]);
@@ -109,7 +110,7 @@ namespace cctag::portable::tests::host_sequence {
 
 using namespace boost::ut;
 
-/// Records every plane it is shown into `tensors`, and timing events into `timing`
+/// Copies observed planes into `tensors` and records timing events in `timing`
 struct RecordingProbe : cctag::Probe {
     std::map<std::string, std::vector<std::uint8_t>> tensors;
     std::vector<std::string> timing;
@@ -144,22 +145,22 @@ struct RecordingProbe : cctag::Probe {
     }
 };
 
-/// A test image with rings and noise to vary the pixel values
+/// Creates a test image with rings and noise to vary the pixel values
 inline std::vector<std::uint8_t>
 test_image(std::uint32_t width, std::uint32_t height, std::uint32_t seed = 12345u) {
-    // Pattern settings: band size in squared pixels and brightness.
+    // Ring width in squared pixels and alternating brightness values
     constexpr std::uint32_t squared_radius_step = 37;
     constexpr std::uint32_t dark_intensity = 40;
     constexpr std::uint32_t bright_intensity = 200;
 
     std::mt19937 random(seed);
-    std::uniform_int_distribution<int> noise(0, 31); // Even 200 + 31 fits in a byte.
+    std::uniform_int_distribution<int> noise(0, 31); // Keep brightness plus noise within a byte
 
     std::vector<std::uint8_t> pixels(static_cast<std::size_t>(width) * height);
     for (std::uint32_t y = 0; y < height; ++y) {
         for (std::uint32_t x = 0; x < width; ++x) {
-            // Squared distance from the top-left corner groups pixels into rings.
-            // Alternate dark and bright bands; rings get narrower farther from the corner.
+            // Alternate dark and bright rings around the top-left corner
+            // Using squared distance makes the rings narrower farther from the corner
             const std::uint32_t radius_squared = x * x + y * y;
             const std::uint32_t ring_index = radius_squared / squared_radius_step;
             const std::uint32_t ring_intensity =
@@ -223,7 +224,7 @@ inline suite<"host_sequence"> host_sequence_suite = [] {
         const std::uint32_t w = 37, h = 23;
         Context<cpu::Backend> context;
         const RecordingProbe probe = run(context, test_image(w, h), w, h);
-        expect(eq(probe.tensors.size(), 12u)); // 4 levels x (src, dx, dy)
+        expect(eq(probe.tensors.size(), 12u)); // `src`, `dx` and `dy` at each of 4 levels
         for (std::uint32_t level = 0; level < context.levels.size(); ++level) {
             expect(eq(probe.tensors.count("pyramid/level" + std::to_string(level) + "/src"), 1u))
                 << "src at level" << level;

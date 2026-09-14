@@ -6,7 +6,7 @@ if(NOT CCTAG_PORTABLE_BACKEND STREQUAL "cpu")
   message(FATAL_ERROR "CCTAG_PORTABLE_BACKEND must be 'cpu', got '${CCTAG_PORTABLE_BACKEND}'")
 endif()
 
-# Comma-separated, e.g. address,undefined
+# Separate sanitizer names with commas, e.g. address,undefined
 set(CCTAG_PORTABLE_SANITIZERS "" CACHE STRING "Sanitizers for the portable pipeline and its tests")
 
 add_library(CCTag
@@ -26,7 +26,7 @@ function(cctag_portable_configure target)
   target_compile_features(${target} PRIVATE cxx_std_20)
   set_target_properties(${target} PROPERTIES CXX_EXTENSIONS OFF)
   if(NOT MSVC)
-    # Keep reference comparisons bit-exact
+    # Disable fused multiply-add to preserve exact reference snapshot comparisons
     target_compile_options(${target} PRIVATE -ffp-contract=off -Wmisleading-indentation)
   endif()
   target_include_directories(${target} PRIVATE ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/src)
@@ -34,7 +34,7 @@ function(cctag_portable_configure target)
     # Fail tests on undefined behaviour
     target_compile_options(${target} PRIVATE
         -fsanitize=${CCTAG_PORTABLE_SANITIZERS} -fno-sanitize-recover=all -fno-omit-frame-pointer)
-    # Static library consumers need the sanitizer runtime
+    # Link the sanitizer runtime for static library consumers too
     target_link_options(${target} PUBLIC -fsanitize=${CCTAG_PORTABLE_SANITIZERS})
   endif()
 endfunction()
@@ -73,7 +73,7 @@ if(CCTAG_BUILD_TESTS)
     cctag_portable_configure(${target})
     target_link_libraries(${target} PRIVATE CCTag Boost::ut opencv_imgproc OpenMP::OpenMP_CXX)
     add_test(NAME ${target} COMMAND ${target})
-    # Avoid spin-wait overhead on tiny test images
+    # Let OpenMP threads sleep between tasks to avoid spinning on tiny test images
     set_tests_properties(${target} PROPERTIES
         ENVIRONMENT "OPENCV_CPU_DISABLE=${CCTAG_PORTABLE_OPENCV_CPU_DISABLE};OMP_WAIT_POLICY=passive")
   endfunction()
@@ -91,7 +91,7 @@ if(CCTAG_BUILD_TESTS)
       test/support/reference_snapshot.cpp)
   target_compile_definitions(portable_unit PRIVATE CCTAG_TEST)
 
-  # A missing snapshot must not skip the unit tests
+  # Keep stage-isolation tests separate so an unset snapshot directory only skips those tests
   cctag_portable_add_test(stage_isolation
       test/stage_isolation.cpp
       test/support/reference_snapshot.cpp)

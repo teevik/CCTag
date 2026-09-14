@@ -29,7 +29,7 @@ concept ExecutionBackend = requires(
     std::uint32_t w,
     std::uint32_t h
 ) {
-    // Ensures this level's buffers have dimensions `w` by `h`, no-op if unchanged
+    // Sizes this level's buffers to `w` by `h`, reusing storage if unchanged
     { level.ensure(w, h) };
     // Copies the input grayscale image into `level.src` at pyramid level 0
     { B::load(level, input) };
@@ -37,9 +37,9 @@ concept ExecutionBackend = requires(
     { B::pyramid(level, finer) };
     // Computes horizontal (`dx`) and vertical (`dy`) gradients from `src`
     { B::gradient(level) };
-    // Returns a read-only view of `src`, produced by `load` or `pyramid`
+    // Returns a read-only host view of `src`, produced by `load` or `pyramid`
     { B::host_pyramid(level) } -> std::same_as<PyramidHost>;
-    // Returns read-only views of `dx` and `dy`, produced by `gradient`
+    // Returns read-only host views of `dx` and `dy`, produced by `gradient`
     { B::host_gradient(level) } -> std::same_as<GradientHost>;
     // Waits for all previously submitted stages to finish
     { B::wait(context) };

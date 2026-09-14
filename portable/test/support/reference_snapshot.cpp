@@ -5,7 +5,6 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/.
  */
-// Snapshot reader and stage-buffer comparison support shared by the test executables.
 #include "reference_snapshot.hpp"
 
 #include <cctag/Params.hpp>
@@ -360,7 +359,7 @@ namespace cctag::portable::test {
 
 namespace {
 
-/// Build safetensors file
+/// Builds safetensors bytes from a JSON header and tensor data
 std::vector<std::uint8_t> safetensors(std::string header, const std::vector<std::uint8_t>& data) {
     while (header.size() % 8 != 0) {
         header.push_back(' ');
@@ -381,7 +380,7 @@ using namespace boost::ut;
 
 inline suite<"snapshot_support"> snapshot_support_suite = [] {
     "reads metadata and unaligned tensor values from hand built bytes"_test = [] {
-        // A U8 [2, 3] plane followed by an I16 [1, 2] plane that starts at an odd byte offset.
+        // Place the I16 plane at an odd byte offset to check reading unaligned values
         const std::string header =
             R"({"pyramid/level0/src": {"dtype": "U8", "shape": [2, 3], "data_offsets": [0, 6]},)"
             R"( "gradient/level0/dx": {"dtype": "I16", "shape": [1, 2], "data_offsets": [7, 11]},)"
@@ -431,7 +430,7 @@ inline suite<"snapshot_support"> snapshot_support_suite = [] {
     };
 
     "fills stage buffers and reports exact plane mismatches"_test = [] {
-        // `src` and `dx` for a 3x2 level; `dy` is missing on purpose.
+        // Include `src` and `dx` for a 3x2 level, leaving out `dy` to check missing data
         const std::string header =
             R"({"pyramid/level0/src":{"dtype":"U8","shape":[2,3],"data_offsets":[0,6]},)"
             R"("gradient/level0/dx":{"dtype":"I16","shape":[2,3],"data_offsets":[6,18]},)"
@@ -451,14 +450,14 @@ inline suite<"snapshot_support"> snapshot_support_suite = [] {
         buffers.src(1, 2) = 0;
         const Mismatch mismatch = compare_plane<std::uint8_t>(src, buffers.src_plane().as_const());
         expect(eq(mismatch.count, 2u));
-        expect(eq(mismatch.first, 4u)); // (y 1, x 1)
+        expect(eq(mismatch.first, 4u)); // First difference at (y 1, x 1)
 
         cpu::Buffers wrong_size;
         wrong_size.ensure(2, 3);
         expect(throws<std::runtime_error>([&] {
             (void)fill_level(snapshot, 0, Stage::pyramid, wrong_size);
         }));
-        // `dy` is absent: the gradient fill fails; beyond gradient the loader has no buffers yet.
+        // Both fills need the missing `dy` plane and must fail
         expect(throws<std::runtime_error>([&] {
             (void)fill_level(snapshot, 0, Stage::gradient, buffers);
         }));

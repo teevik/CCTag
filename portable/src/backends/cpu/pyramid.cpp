@@ -15,7 +15,7 @@
 namespace cctag::portable::cpu {
 
 void Backend::load(Buffers& level0, kernels::Plane<const std::uint8_t> input) {
-    // Copy row by row since the input may be view of a larger image
+    // Copy row by row since the input may be a view of a larger image
     for (std::uint32_t y = 0; y < input.height; ++y) {
         std::copy_n(input.row(y), input.width, level0.src[static_cast<int>(y)]);
     }

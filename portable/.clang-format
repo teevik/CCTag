@@ -11,7 +11,7 @@ BreakBeforeBraces: Attach
 InsertBraces: true
 SpaceBeforeParens: ControlStatements
 
-# Block indent instead of hanging alignment, one item per line on overflow
+# Indent wrapped arguments and parameters, one per line
 AlignAfterOpenBracket: BlockIndent
 BinPackArguments: false
 BinPackParameters: OnePerLine
@@ -21,7 +21,7 @@ AlignOperands: DontAlign
 BreakBeforeBinaryOperators: NonAssignment
 BreakBeforeTernaryOperators: true
 
-# Nothing collapsed onto one line except empty bodies / small lambdas
+# Keep empty bodies and lambdas on one line when they fit
 AllowShortFunctionsOnASingleLine: Empty
 AllowShortBlocksOnASingleLine: Empty
 AllowShortIfStatementsOnASingleLine: Never
@@ -30,7 +30,7 @@ AllowShortCaseLabelsOnASingleLine: false
 AllowShortLambdasOnASingleLine: All
 AllowShortEnumsOnASingleLine: false
 
-# No column alignment
+# Keep spacing independent of neighbouring lines
 AlignConsecutiveAssignments: None
 AlignConsecutiveDeclarations: None
 AlignTrailingComments:
@@ -50,13 +50,13 @@ Cpp11BracedListStyle: true
 NamespaceIndentation: None
 FixNamespaceComments: true
 
-# Whitespace hygiene
+# Keep at most one blank line and end the file with a newline
 MaxEmptyLinesToKeep: 1
 KeepEmptyLinesAtTheStartOfBlocks: false
 InsertNewlineAtEOF: true
 ReflowComments: true
 
-# Includes: sorted and grouped
+# Sort includes within groups
 SortIncludes: CaseSensitive
 IncludeBlocks: Regroup
 IncludeCategories:

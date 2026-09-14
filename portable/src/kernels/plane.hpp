@@ -19,13 +19,14 @@ struct Plane {
     T* data = nullptr;
     std::uint32_t width = 0;
     std::uint32_t height = 0;
+    /// Distance between row starts, in elements
     std::size_t stride = 0;
 
     T* row(std::uint32_t y) const {
         return data + static_cast<std::size_t>(y) * stride;
     }
 
-    /// The same plane as read-only
+    /// Returns a read-only view of the same plane
     Plane<const T> as_const() const {
         return {data, width, height, stride};
     }

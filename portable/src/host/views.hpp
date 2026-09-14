@@ -16,18 +16,18 @@
 
 namespace cctag::portable {
 
-/// `src` of one level after `pyramid`.
+/// Read-only host view of one pyramid level's source image
 struct PyramidHost {
     kernels::Plane<const std::uint8_t> src;
 };
 
-/// `dx`, `dy` of one level after `gradient`.
+/// Read-only host views of one pyramid level's horizontal and vertical gradients
 struct GradientHost {
     kernels::Plane<const std::int16_t> dx;
     kernels::Plane<const std::int16_t> dy;
 };
 
-/// Converts a `Plane` to a `cctag::Plane` for use with the probe.
+/// Converts a plane to the probe's format, with the row stride in bytes
 template <class T>
 inline cctag::Plane probe_plane(kernels::Plane<const T> plane) {
     return cctag::Plane{plane.width, plane.height, plane.stride * sizeof(T), plane.data};

@@ -5,13 +5,7 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/.
  */
-// Stage isolation: each test runs one stage function of the CPU backend on the reference
-// snapshot's outputs of the previous stage, loaded straight into the stage buffers, and compares
-// its output element-exact against the reference's outputs of that stage. One test per stage
-// function; each new stage adds one.
-//
-// The isolation tests need the reference snapshots (`$CCTAG_REFERENCE_SNAPSHOTS`) and are
-// skipped with a message without them. The loader checks itself in support/reference_snapshot.cpp.
+// Run each CPU pipeline stage on reference inputs and compare its output exactly
 #include "backends/cpu/backend.hpp"
 #include "host/context.hpp"
 #include "kernels/plane.hpp"
@@ -42,7 +36,7 @@ int main(int argc, const char** argv) {
     if (!reference_snapshots_dir()) {
         std::cout << "CCTAG_REFERENCE_SNAPSHOTS is not set: enter `nix develop` or point it "
                      "at the reference-snapshot store\n";
-        return 77;
+        return 77; // Tell CTest to skip when the reference snapshot directory is unset
     }
 
     const suite<"stage_isolation"> stage_isolation_suite = [] {
@@ -53,7 +47,7 @@ int main(int argc, const char** argv) {
                 fill_context(snapshot, Stage::pyramid, context);
                 auto& levels = context.levels;
 
-                // Level 0 is the load: the reference image in, the same bytes out.
+                // Check that loading the reference image preserves its bytes at level 0
                 const Tensor& image = snapshot.tensor(Stage::pyramid, 0, "src");
                 const std::vector<std::uint8_t> pixels = image.as<std::uint8_t>();
                 cpu::Backend::load(
@@ -68,8 +62,7 @@ int main(int argc, const char** argv) {
                 expect(loaded.exact()) << snapshot.problem() << describe(image, loaded);
 
                 for (std::uint32_t level = 1; level < levels.size(); ++level) {
-                    // The finer level holds this test's own output from the previous iteration:
-                    // restore the reference's before it becomes the input.
+                    // Restore the finer level's reference input so resize errors cannot accumulate
                     fill_level(snapshot, level - 1, Stage::pyramid, levels[level - 1]);
                     cpu::Backend::pyramid(levels[level], levels[level - 1]);
                     const Tensor& expected = snapshot.tensor(Stage::pyramid, level, "src");

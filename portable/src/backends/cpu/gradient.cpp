@@ -17,7 +17,7 @@ namespace cctag::portable::cpu {
 
 namespace {
 
-/// The 9x9 derivative kernel.
+/// Builds the 9x9 horizontal derivative kernel
 cv::Mat1f derivative_kernel() {
     cv::Mat1f kernel(9, 9);
     std::copy_n(&kernels::kDerivativeKernel[0][0], kernel.total(), kernel.begin());
@@ -32,18 +32,18 @@ const cv::Mat1f kKernelDy = kKernelDx.t();
 } // namespace
 
 void Backend::gradient(Buffers& level) {
-    // Anchor to middle of kernel
+    // Anchor to the middle of the kernel
     const cv::Point anchor{-1, -1};
     // No bias
     const double delta{0};
 
-    // Apply derivative kernel to source to get dx and dy
+    // Apply the derivative kernels to `src` to get `dx` and `dy`
     cv::filter2D(level.src, level.dx, CV_16SC1, kKernelDx, anchor, delta, cv::BORDER_REPLICATE);
     cv::filter2D(level.src, level.dy, CV_16SC1, kKernelDy, anchor, delta, cv::BORDER_REPLICATE);
 }
 
 GradientHost Backend::host_gradient(Buffers& level) {
-    // Return read-only views of dx and dy
+    // Return read-only views of `dx` and `dy`
     return GradientHost{level.dx_plane().as_const(), level.dy_plane().as_const()};
 }
 

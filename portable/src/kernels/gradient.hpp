@@ -14,6 +14,7 @@
 
 namespace cctag::portable::kernels {
 
+/// Rounds using the current rounding mode and clamps to the int16 range
 inline std::int16_t round_to_int16(float value) {
     const float rounded = std::nearbyint(value);
     if (rounded >= 32767.f) {
@@ -25,7 +26,8 @@ inline std::int16_t round_to_int16(float value) {
     return static_cast<std::int16_t>(rounded);
 }
 
-/// `kerneldX` of src/cctag/filter/cvRecode.cpp:74-84. `kerneldY` is its transpose.
+/// Horizontal derivative kernel (`kerneldX`) from src/cctag/filter/cvRecode.cpp
+/// The vertical derivative kernel is its transpose
 inline constexpr float kDerivativeKernel[9][9] = {
     {-0.000000143284235f,
      -0.000003558691641f,
@@ -110,7 +112,8 @@ inline constexpr float kDerivativeKernel[9][9] = {
      0.000000143284235f},
 };
 
-/// The taps of one derivative kernel. Offsets are relative to the anchor (4, 4).
+/// Nonzero coefficients and pixel offsets for one derivative kernel
+/// Offsets are relative to the kernel's centre at (4, 4)
 struct GradientTaps {
     static constexpr int count = 72;
     float coefficient[count];
@@ -118,7 +121,8 @@ struct GradientTaps {
     std::int8_t dy[count];
 };
 
-/// `transposed = false` builds the `dx` taps (column 4 is zero), `true` the `dy` taps (row 4).
+/// Builds horizontal (`dx`) taps, or vertical (`dy`) taps when `transposed` is true
+/// Skips the zero coefficients in the middle column or row
 constexpr GradientTaps make_gradient_taps(bool transposed) {
     GradientTaps taps{};
     int k = 0;
@@ -140,7 +144,7 @@ constexpr GradientTaps make_gradient_taps(bool transposed) {
 inline constexpr GradientTaps kDxTaps = make_gradient_taps(false);
 inline constexpr GradientTaps kDyTaps = make_gradient_taps(true);
 
-/// One output pixel of `filter2D` with replicate borders.
+/// Computes one gradient pixel, repeating edge pixels outside the image
 inline std::int16_t gradient_at(
     const std::uint8_t* src,
     std::size_t stride,
@@ -168,7 +172,6 @@ inline std::int16_t gradient_at(
 } // namespace cctag::portable::kernels
 
 #ifdef CCTAG_TEST
-// Check pixel indexing, borders and rounding against OpenCV using the same coefficients.
 #include <boost/ut.hpp>
 
 #include <opencv2/core.hpp>
@@ -181,8 +184,7 @@ namespace cctag::portable::kernels::tests {
 
 using namespace boost::ut;
 
-/// A deterministic, textured image: concentric rings plus noise from a linear congruential
-/// generator, so neighbouring pixels differ and every kernel tap matters.
+/// Creates a repeatable test image with rings and noise to vary the pixel values
 inline cv::Mat1b test_image(int width, int height) {
     cv::Mat1b image(height, width);
     std::uint32_t state = 12345u;
@@ -196,7 +198,7 @@ inline cv::Mat1b test_image(int width, int height) {
     return image;
 }
 
-/// `gradient_at` against `filter2D` at every pixel of a `width` x `height` image.
+/// Checks both gradients against OpenCV's `filter2D` at every pixel
 inline void expect_gradient_at_reproduces_filter2d(int width, int height) {
     const cv::Mat1b image = test_image(width, height);
     cv::Mat1f kernel_dx(9, 9);
@@ -230,7 +232,7 @@ inline suite<"gradient_element"> gradient_element_suite = [] {
         expect_gradient_at_reproduces_filter2d(37, 23);
     };
 
-    // Every size up to the kernel's 9x9 footprint and a bit more
+    // Check dimensions from 1 to 12, covering images smaller and larger than the 9x9 kernel
     "gradient at reproduces filter2d on images smaller than the kernel"_test = [] {
         for (int height = 1; height <= 12; ++height) {
             for (int width = 1; width <= 12; ++width) {

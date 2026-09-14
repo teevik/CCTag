@@ -34,7 +34,7 @@ using SelectedContext = portable::Context<portable::SelectedBackend>;
 std::mutex registry_mutex;
 std::map<int, std::unique_ptr<SelectedContext>> registry;
 
-/// One persistent context per pipe, created on first use.
+/// Returns the pipe's persistent context, creating it on first use
 SelectedContext& context_for(int pipeId) {
     const std::lock_guard<std::mutex> lock(registry_mutex);
     auto& slot = registry[pipeId];
@@ -56,8 +56,9 @@ void cctagDetection(
     const std::string& parameterFile,
     const std::string& cctagBankFilename
 ) {
-    // TODO(markers stage): load parameterFile through Params.cpp and cctagBankFilename through
-    // CCTagMarkersBank. Until then refuse them.
+    // TODO(markers stage): Load `parameterFile` through Params.cpp and
+    // `cctagBankFilename` through CCTagMarkersBank
+    // Reject file arguments until loading is supported
     if (!parameterFile.empty() || !cctagBankFilename.empty()) {
         throw std::logic_error(
             "cctagDetection: parameter and bank files are not supported by the portable pipeline "

@@ -8,14 +8,7 @@
 #ifndef CCTAG_PORTABLE_TEST_REFERENCE_SNAPSHOT_HPP
 #define CCTAG_PORTABLE_TEST_REFERENCE_SNAPSHOT_HPP
 
-// Test support for stage isolation: reads a reference snapshot (the safetensors file the legacy
-// pipeline writes with every stage's outputs for one problem) and fills the CPU backend's stage
-// buffers with the reference snapshot's outputs, so one stage function can run on its reference
-// input and be compared element-exact against its reference output. A whole-run
-// comparison cannot tell a wrong stage from a stage fed something subtly different upstream; this
-// can.
-//
-// The header is parsed with Boost.JSON (header-only); the data section is viewed in place.
+// Reads reference snapshots, fills CPU stage buffers and compares stage outputs exactly
 
 #include "backends/cpu/backend.hpp"
 #include "host/context.hpp"
@@ -34,7 +27,7 @@
 
 namespace cctag::portable::test {
 
-/// The pipeline stages, in pipeline order; tensor names start with the stage name.
+/// Pipeline stages in execution order, also used as prefixes in tensor names
 enum class Stage {
     pyramid,
     gradient,
@@ -47,10 +40,10 @@ enum class Stage {
 };
 
 const char* stage_name(Stage stage);
-/// Inverse of `stage_name`; empty for an unknown name.
+/// Parses a stage name, returning no value if it is unknown
 std::optional<Stage> parse_stage(const std::string& name);
 
-/// The four element types a stage snapshot may contain.
+/// Element types supported by the stage snapshot format
 enum class Dtype {
     u8,
     i16,
@@ -80,7 +73,7 @@ constexpr Dtype dtype_of<float>() {
     return Dtype::f32;
 }
 
-/// One tensor of a snapshot.
+/// One stage snapshot tensor, with a view of its bytes in the snapshot's storage
 struct Tensor {
     std::string name;
     Dtype dtype = Dtype::u8;
@@ -89,8 +82,8 @@ struct Tensor {
 
     std::size_t elements() const;
 
-    /// The values as `T`, copied out: the file gives no alignment guarantee, so the bytes are
-    /// never reinterpreted in place. Throws when `T` is not the tensor's dtype.
+    /// Copies values into aligned storage since tensor bytes may be unaligned
+    /// Throws if `T` does not match the tensor's element type
     template <class T>
     std::vector<T> as() const {
         expect_dtype(dtype_of<T>());
@@ -103,11 +96,11 @@ struct Tensor {
     void expect_dtype(Dtype expected) const;
 };
 
-/// A parsed stage snapshot: `__metadata__` plus every tensor by its full name.
+/// Holds a reference snapshot's file bytes, metadata and tensors indexed by full name
 class ReferenceSnapshot {
   public:
     static ReferenceSnapshot read(const std::filesystem::path& file);
-    /// Parses an in-memory safetensors file: `u64` header length, JSON header, data section.
+    /// Parses safetensors bytes: an 8-byte header length, a JSON header and tensor data
     static ReferenceSnapshot from_bytes(std::vector<std::uint8_t> bytes);
 
     ReferenceSnapshot(ReferenceSnapshot&&) = default;
@@ -118,7 +111,7 @@ class ReferenceSnapshot {
     const std::map<std::string, std::string>& metadata() const {
         return metadata_entries;
     }
-    /// A `__metadata__` field; throws when absent.
+    /// Returns a metadata field, throwing if it is missing
     const std::string& meta(const std::string& key) const;
     std::uint32_t meta_u32(const std::string& key) const;
 
@@ -137,7 +130,7 @@ class ReferenceSnapshot {
     std::uint32_t crowns() const {
         return meta_u32("crowns");
     }
-    /// `__metadata__.stages`, in file order.
+    /// Returns the stages listed in `__metadata__.stages`, preserving their order
     std::vector<Stage> stages() const;
     bool has(Stage stage) const;
 
@@ -147,9 +140,9 @@ class ReferenceSnapshot {
     bool has_tensor(const std::string& name) const {
         return tensor_entries.count(name) != 0;
     }
-    /// Throws when the tensor is absent.
+    /// Returns a tensor by full name, throwing if it is missing
     const Tensor& tensor(const std::string& name) const;
-    /// `<stage>/level<level>/<name>`.
+    /// Returns the tensor named `<stage>/level<level>/<name>`, throwing if it is missing
     const Tensor& tensor(Stage stage, std::uint32_t level, const std::string& name) const;
 
   private:
@@ -160,14 +153,15 @@ class ReferenceSnapshot {
     std::map<std::string, Tensor> tensor_entries;
 };
 
-/// `$CCTAG_REFERENCE_SNAPSHOTS` when set and non-empty: the directory of reference snapshots,
-/// one `<problem>.safetensors` per test image.
+/// Returns the reference snapshot directory from `CCTAG_REFERENCE_SNAPSHOTS`
+/// Returns no value if the variable is unset or empty
 std::optional<std::filesystem::path> reference_snapshots_dir();
-/// Every `*.safetensors` in the store, sorted by name. Empty when the store is unset.
+/// Lists `.safetensors` files in the reference snapshot directory, sorted by name
+/// Returns an empty list if `CCTAG_REFERENCE_SNAPSHOTS` is unset or empty
 std::vector<std::filesystem::path> reference_snapshot_files();
 
-/// Copies a `[height, width]` tensor into a plane of the same element type and dimensions. Throws
-/// on a dtype or shape mismatch.
+/// Copies a `[height, width]` tensor into a plane, respecting its row stride
+/// Throws if the element type or dimensions differ
 template <class T>
 void copy_plane(const Tensor& reference, kernels::Plane<T> plane) {
     if (reference.shape.size() != 2 || reference.shape[0] != plane.height
@@ -187,9 +181,8 @@ void copy_plane(const Tensor& reference, kernels::Plane<T> plane) {
     }
 }
 
-/// Fills one level's stage buffers (already sized by `Buffers::ensure`) with the reference's
-/// outputs of every stage up to and including `upto`. The buffers stop at `gradient` so far; each
-/// new stage extends this with one more fill.
+/// Fills one level's stage buffers with reference outputs through `upto`, inclusive
+/// Requires buffers sized by `Buffers::ensure` and supports `pyramid` and `gradient`
 void fill_level(
     const ReferenceSnapshot& snapshot,
     std::uint32_t level,
@@ -197,14 +190,17 @@ void fill_level(
     cpu::Buffers& buffers
 );
 
-/// Sizes `context` for the snapshot's image and parameters (`Parameters(crowns)`), checks every
-/// level's dimensions against the reference's, and fills every level up to and including `upto`.
+/// Sizes the context using the reference snapshot's image dimensions and crown count
+/// Fills each level through `upto`, inclusive, checking the level count and plane dimensions
 void fill_context(const ReferenceSnapshot& snapshot, Stage upto, Context<cpu::Backend>& context);
 
-/// The result of an element-exact comparison.
+/// Counts differing elements in an exact comparison
 struct Mismatch {
+    /// Number of elements compared
     std::size_t total = 0;
+    /// Number of elements whose bytes differ
     std::size_t count = 0;
+    /// Flat index of the first difference, valid when `count` is nonzero
     std::size_t first = 0;
 
     bool exact() const {
@@ -212,7 +208,7 @@ struct Mismatch {
     }
 };
 
-/// Element-exact comparison of a host plane against a `[height, width]` tensor.
+/// Compares a host plane with a `[height, width]` tensor, checking each element's bytes
 template <class T>
 Mismatch compare_plane(const Tensor& reference, kernels::Plane<const T> plane) {
     if (reference.shape.size() != 2 || reference.shape[0] != plane.height
@@ -240,7 +236,7 @@ Mismatch compare_plane(const Tensor& reference, kernels::Plane<const T> plane) {
     return mismatch;
 }
 
-/// Element-exact comparison of contiguous values against a tensor of the same element count.
+/// Compares contiguous values with a tensor of the same element count, checking their bytes
 template <class T>
 Mismatch compare_values(const Tensor& reference, std::span<const T> values) {
     if (reference.elements() != values.size()) {
@@ -263,8 +259,7 @@ Mismatch compare_values(const Tensor& reference, std::span<const T> values) {
     return mismatch;
 }
 
-/// One line for a test message: the tensor, the mismatch count and where the first one is
-/// (as `(y, x)` when the tensor is a plane).
+/// Describes the mismatch count and first differing index, adding `(y, x)` for a plane
 std::string describe(const Tensor& reference, const Mismatch& mismatch);
 
 } // namespace cctag::portable::test
