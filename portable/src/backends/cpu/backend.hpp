@@ -133,6 +133,8 @@ struct Backend {
     static void vote(Buffers& level, const Parameters& params);
     /// Walks seeds, resolves ownership and gathers segments and their children
     static void linking(Buffers& level, const Parameters& params);
+    /// Fits candidate markers across levels and refits their outer ellipses at level zero
+    static void candidates(Context<Backend>& context, const Parameters& params);
 
     static PyramidHost host_pyramid(Buffers& level);
     static GradientHost host_gradient(Buffers& level);

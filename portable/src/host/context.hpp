@@ -8,6 +8,9 @@
 #ifndef CCTAG_PORTABLE_HOST_CONTEXT_HPP
 #define CCTAG_PORTABLE_HOST_CONTEXT_HPP
 
+#include "host/candidates.hpp"
+#include "host/views.hpp"
+
 #include <cctag/Params.hpp>
 
 #include <algorithm>
@@ -24,6 +27,12 @@ struct Context {
     std::uint32_t width = 0;
     std::uint32_t height = 0;
     std::vector<typename Backend::Buffers> levels;
+    std::vector<CandidateLevel> candidate_levels;
+    std::vector<CandidateMarker> candidate_markers;
+    /// Contiguous probe rows, filled from the raw candidate markers
+    std::vector<float> candidate_ellipses;
+    std::vector<std::int32_t> candidate_pyramid_levels;
+    std::vector<float> candidate_quality;
 
     void ensure(std::uint32_t input_width, std::uint32_t input_height, const Parameters& params) {
         const std::size_t count = params._numberOfProcessedMultiresLayers;
@@ -53,6 +62,29 @@ struct Context {
         height = input_height;
     }
 };
+
+/// Builds probe rows without sorting or deduplicating the candidate markers
+template <class Backend>
+CandidatesHost host_candidates(Context<Backend>& context) {
+    context.candidate_ellipses.clear();
+    context.candidate_pyramid_levels.clear();
+    context.candidate_quality.clear();
+    for (const auto& marker : context.candidate_markers) {
+        const auto& ellipse = marker.rescaled_outer_ellipse;
+        context.candidate_ellipses.insert(
+            context.candidate_ellipses.end(),
+            {ellipse.cx, ellipse.cy, ellipse.a, ellipse.b, ellipse.angle}
+        );
+        context.candidate_pyramid_levels.push_back(marker.level);
+        context.candidate_quality.push_back(marker.quality);
+    }
+    return {
+        static_cast<std::uint32_t>(context.candidate_markers.size()),
+        context.candidate_ellipses,
+        context.candidate_pyramid_levels,
+        context.candidate_quality
+    };
+}
 
 } // namespace cctag::portable
 

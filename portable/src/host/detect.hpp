@@ -149,6 +149,21 @@ void detect(
             );
         }
     }
+
+    // Fit candidate markers across levels and project their outer ellipses to level zero
+    {
+        StageTiming<Backend> timing(context, probe, "candidates");
+        Backend::candidates(context, params);
+    }
+    if (probe) {
+        const CandidatesHost candidates = host_candidates(context);
+        probe->candidates(
+            {candidates.n,
+             candidates.ellipses.data(),
+             candidates.levels.data(),
+             candidates.quality.data()}
+        );
+    }
 }
 
 } // namespace cctag::portable
@@ -291,6 +306,24 @@ struct RecordingProbe : cctag::Probe {
         timing.push_back(std::string("enter ") + stage);
     }
 
+    void candidates(const cctag::CandidatesView& candidates) override {
+        record(
+            "candidates/ellipse",
+            {5, candidates.candidate_count, 5 * sizeof(float), candidates.outer_ellipse_parameters},
+            sizeof(float)
+        );
+        record(
+            "candidates/level",
+            {1, candidates.candidate_count, sizeof(std::int32_t), candidates.pyramid_levels},
+            sizeof(std::int32_t)
+        );
+        record(
+            "candidates/quality",
+            {1, candidates.candidate_count, sizeof(float), candidates.quality_scores},
+            sizeof(float)
+        );
+    }
+
     void leave(const char* stage) override {
         timing.push_back(std::string("leave ") + stage);
     }
@@ -373,12 +406,15 @@ inline suite<"host_sequence"> host_sequence_suite = [] {
         expect(probe.tensors.at("pyramid/level0/src") == image);
     };
 
-    "probe observes stages through linking at every level"_test = [] {
+    "probe observes per level stages and whole image candidate markers"_test = [] {
         const std::uint32_t w = 37, h = 23;
         Context<cpu::Backend> context;
         const RecordingProbe probe = run(context, test_image(w, h), w, h);
-        // Twelve tensors through vote and five from linking at each of 4 levels
-        expect(eq(probe.tensors.size(), 68u));
+        // Seventeen tensors at each of four levels, then three whole-image candidate tensors
+        expect(eq(probe.tensors.size(), 71u));
+        for (const auto* name : {"ellipse", "level", "quality"}) {
+            expect(eq(probe.tensors.count(std::string("candidates/") + name), 1u)) << name;
+        }
         for (std::uint32_t level = 0; level < context.levels.size(); ++level) {
             expect(eq(probe.tensors.count("pyramid/level" + std::to_string(level) + "/src"), 1u))
                 << "src at level" << level;
@@ -418,7 +454,7 @@ inline suite<"host_sequence"> host_sequence_suite = [] {
         }
     };
 
-    "probe receives timing events in stage order through linking"_test = [] {
+    "probe receives timing events in stage order through candidates"_test = [] {
         const std::uint32_t w = 37, h = 23;
         Context<cpu::Backend> context;
         const RecordingProbe probe = run(context, test_image(w, h), w, h);
@@ -434,7 +470,9 @@ inline suite<"host_sequence"> host_sequence_suite = [] {
             "enter vote",
             "leave vote",
             "enter linking",
-            "leave linking"
+            "leave linking",
+            "enter candidates",
+            "leave candidates"
         };
         expect(probe.timing == expected);
     };

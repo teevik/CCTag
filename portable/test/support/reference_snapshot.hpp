@@ -184,7 +184,7 @@ void copy_plane(const Tensor& reference, kernels::Plane<T> plane) {
 }
 
 /// Fills one level's stage buffers with reference outputs through `upto`, inclusive
-/// Requires buffers sized by `Buffers::ensure` and supports stages through `vote`
+/// Requires buffers sized by `Buffers::ensure` and supports stages through `linking`
 void fill_level(
     const ReferenceSnapshot& snapshot,
     std::uint32_t level,
@@ -263,6 +263,20 @@ Mismatch compare_values(const Tensor& reference, std::span<const T> values) {
 
 /// Describes the mismatch count and first differing index, adding `(y, x)` for a plane
 std::string describe(const Tensor& reference, const Mismatch& mismatch);
+
+/// Candidate comparison after canonicalization, quality-based deduplication and nearest pairing
+struct CandidateComparison {
+    bool passed = true;
+    std::size_t unmatched_reference = 0;
+    std::size_t extra = 0;
+    float center_drift = 0;
+    float axis_drift = 0;
+    float angle_drift = 0;
+};
+
+/// Applies stage-snapshot's Rules::Tolerant candidate contract; rejects malformed views
+CandidateComparison compare_candidates(CandidatesHost reference, CandidatesHost candidate);
+std::string describe(const CandidateComparison& comparison);
 
 } // namespace cctag::portable::test
 

@@ -5,7 +5,7 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/.
  */
-// Run each CPU pipeline stage on reference inputs and compare its output exactly
+// Run each CPU pipeline stage on reference inputs and compare its output with the reference
 #include "backends/cpu/backend.hpp"
 #include "host/context.hpp"
 #include "kernels/plane.hpp"
@@ -13,6 +13,9 @@
 
 #include <boost/ut.hpp>
 
+#include <omp.h>
+
+#include <algorithm>
 #include <cstdint>
 #include <iostream>
 #include <vector>
@@ -40,6 +43,70 @@ int main(int argc, const char** argv) {
     }
 
     const suite<"stage_isolation"> stage_isolation_suite = [] {
+        "candidate markers are exact across thread counts and reused contexts"_test = [] {
+            const int threads = omp_get_max_threads();
+            Context<cpu::Backend> reused;
+            for (const auto& file : snapshot_files_or_fail()) {
+                const ReferenceSnapshot snapshot = ReferenceSnapshot::read(file);
+                const cctag::Parameters params(snapshot.crowns());
+                Context<cpu::Backend> fresh;
+                fill_context(snapshot, Stage::linking, fresh);
+                omp_set_num_threads(1);
+                cpu::Backend::candidates(fresh, params);
+                const CandidatesHost expected = host_candidates(fresh);
+                for (const int count : {1, 3, threads}) {
+                    fill_context(snapshot, Stage::linking, reused);
+                    omp_set_num_threads(count);
+                    cpu::Backend::candidates(reused, params);
+                    const CandidatesHost actual = host_candidates(reused);
+                    expect(std::ranges::equal(expected.ellipses, actual.ellipses))
+                        << snapshot.problem() << "ellipses at" << count << "threads";
+                    expect(std::ranges::equal(expected.levels, actual.levels))
+                        << snapshot.problem() << "levels";
+                    expect(std::ranges::equal(expected.quality, actual.quality))
+                        << snapshot.problem() << "quality";
+                    expect(eq(fresh.candidate_markers.size(), reused.candidate_markers.size()))
+                        << fatal;
+                    for (std::size_t i = 0; i < fresh.candidate_markers.size(); ++i) {
+                        const auto& a = fresh.candidate_markers[i].outer_points;
+                        const auto& b = reused.candidate_markers[i].outer_points;
+                        expect(eq(a.size(), b.size()))
+                            << snapshot.problem() << "outer point count" << fatal;
+                        expect(
+                            std::equal(
+                                a.begin(),
+                                a.end(),
+                                b.begin(),
+                                [](const auto& left, const auto& right) {
+                            return left.x == right.x && left.y == right.y && left.dx == right.dx
+                                && left.dy == right.dy;
+                        }
+                            )
+                        ) << snapshot.problem()
+                          << "directed outer points";
+                    }
+                }
+            }
+            omp_set_num_threads(threads);
+        };
+        "candidates match reference snapshot from reference linking and level zero edges"_test =
+            [] {
+            for (const auto& file : snapshot_files_or_fail()) {
+                const ReferenceSnapshot snapshot = ReferenceSnapshot::read(file);
+                Context<cpu::Backend> context;
+                fill_context(snapshot, Stage::linking, context);
+                const cctag::Parameters params(snapshot.crowns());
+                cpu::Backend::candidates(context, params);
+                const auto ellipses = snapshot.tensor("candidates/ellipse").as<float>();
+                const auto levels = snapshot.tensor("candidates/level").as<std::int32_t>();
+                const auto quality = snapshot.tensor("candidates/quality").as<float>();
+                const auto comparison = compare_candidates(
+                    {static_cast<std::uint32_t>(levels.size()), ellipses, levels, quality},
+                    host_candidates(context)
+                );
+                expect(comparison.passed) << snapshot.problem() << describe(comparison);
+            }
+        };
         "pyramid matches reference snapshot from each reference finer level"_test = [] {
             for (const auto& file : snapshot_files_or_fail()) {
                 const ReferenceSnapshot snapshot = ReferenceSnapshot::read(file);

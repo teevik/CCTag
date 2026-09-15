@@ -61,6 +61,14 @@ struct LinkingHost {
     std::span<const float> avg_vote;
 };
 
+/// Read-only host view of the raw candidate markers across all pyramid levels
+struct CandidatesHost {
+    std::uint32_t n;
+    std::span<const float> ellipses;
+    std::span<const std::int32_t> levels;
+    std::span<const float> quality;
+};
+
 /// Converts a plane to the probe's format, with the row stride in bytes
 template <class T>
 inline cctag::Plane probe_plane(kernels::Plane<const T> plane) {

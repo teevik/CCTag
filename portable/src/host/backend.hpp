@@ -48,6 +48,8 @@ concept ExecutionBackend = requires(
     { B::vote(level, params) };
     // Walks seeds, resolves ownership and gathers segments and their children
     { B::linking(level, params) };
+    // Fits candidate markers across levels, then refits them against level-zero edges
+    { B::candidates(context, params) };
     // Returns a read-only host view of `src`, produced by `load` or `pyramid`
     { B::host_pyramid(level) } -> std::same_as<PyramidHost>;
     // Returns read-only host views of `dx` and `dy`, produced by `gradient`

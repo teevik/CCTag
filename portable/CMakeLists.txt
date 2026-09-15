@@ -14,13 +14,15 @@ add_library(CCTag
     ${PROJECT_SOURCE_DIR}/src/cctag/Params.cpp
     ${PROJECT_SOURCE_DIR}/src/cctag/geometry/Ellipse.cpp
     src/ICCTag.cpp
+    src/host/ellipse.cpp
     src/backends/cpu/buffers.cpp
     src/backends/cpu/pyramid.cpp
     src/backends/cpu/gradient.cpp
     src/backends/cpu/edges.cpp
     src/backends/cpu/edge_points.cpp
     src/backends/cpu/vote.cpp
-    src/backends/cpu/linking.cpp)
+    src/backends/cpu/linking.cpp
+    src/backends/cpu/candidates.cpp)
 
 find_package(OpenMP REQUIRED COMPONENTS CXX)
 set(THREADS_PREFER_PTHREAD_FLAG ON)
@@ -86,12 +88,14 @@ if(CCTAG_BUILD_TESTS)
   set(unit_test_headers
       src/kernels/canny.hpp
       src/kernels/gradient.hpp
+      src/kernels/pcg32.hpp
       src/kernels/thinning.hpp
       src/host/context.hpp
       src/host/detect.hpp)
   set_source_files_properties(${unit_test_headers} PROPERTIES LANGUAGE CXX)
   cctag_portable_add_test(unit
       ${unit_test_headers}
+      src/host/ellipse.cpp
       src/backends/cpu/edges.cpp
       src/backends/cpu/edge_points.cpp
       src/backends/cpu/vote.cpp

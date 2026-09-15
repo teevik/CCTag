@@ -13,10 +13,15 @@
 #include <boost/json/src.hpp>
 
 #include <algorithm>
+#include <array>
 #include <charconv>
+#include <cmath>
 #include <cstdlib>
 #include <fstream>
+#include <numbers>
+#include <numeric>
 #include <sstream>
+#include <tuple>
 
 namespace cctag::portable::test {
 
@@ -36,6 +41,59 @@ Dtype parse_dtype(const std::string& name, const std::string& tensor) {
         return Dtype::f32;
     }
     throw std::runtime_error(tensor + ": unsupported dtype " + name);
+}
+
+struct CandidateRow {
+    std::array<float, 5> ellipse;
+    std::int32_t level;
+    float quality;
+};
+
+float center_distance(const CandidateRow& a, const CandidateRow& b) {
+    const float x = a.ellipse[0] - b.ellipse[0], y = a.ellipse[1] - b.ellipse[1];
+    return std::sqrt(x * x + y * y);
+}
+
+std::vector<CandidateRow> candidate_rows(CandidatesHost candidates) {
+    if (candidates.ellipses.size() != std::size_t{candidates.n} * 5
+        || candidates.levels.size() != candidates.n || candidates.quality.size() != candidates.n
+        || !std::ranges::all_of(candidates.ellipses, [](float value) {
+        return std::isfinite(value);
+    }) || !std::ranges::all_of(candidates.quality, [](float value) {
+        return std::isfinite(value);
+    })) {
+        throw std::runtime_error("candidates: inconsistent row counts or non-finite values");
+    }
+    std::vector<CandidateRow> rows;
+    for (std::size_t i = 0; i < candidates.n; ++i) {
+        CandidateRow row;
+        std::copy_n(candidates.ellipses.begin() + 5 * i, 5, row.ellipse.begin());
+        row.level = candidates.levels[i];
+        row.quality = candidates.quality[i];
+        rows.push_back(row);
+    }
+    // The snapshot probe canonicalizes before Rules::Tolerant deduplicates by quality
+    std::sort(rows.begin(), rows.end(), [](const auto& a, const auto& b) {
+        return std::tie(a.level, a.ellipse[1], a.ellipse[0])
+            < std::tie(b.level, b.ellipse[1], b.ellipse[0]);
+    });
+    std::vector<CandidateRow> deduplicated;
+    for (const auto& row : rows) {
+        bool found = false;
+        for (auto& current : deduplicated) {
+            if (center_distance(row, current)
+                < 0.5f * std::max(row.ellipse[3], current.ellipse[3])) {
+                if (row.quality > current.quality) {
+                    current = row;
+                }
+                found = true;
+            }
+        }
+        if (!found) {
+            deduplicated.push_back(row);
+        }
+    }
+    return deduplicated;
 }
 
 constexpr const char* kStageNames[] = {
@@ -357,6 +415,52 @@ void fill_level(
     buffers.child_counts =
         snapshot.tensor(Stage::linking, level, "child_counts").as<std::int32_t>();
     buffers.avg_vote = snapshot.tensor(Stage::linking, level, "avg_vote").as<float>();
+    // Rebuild the unstored children and candidate order from reference segments and votes
+    const auto count = buffers.link_seeds.size();
+    buffers.children_offsets.assign(1, 0);
+    buffers.children_values.clear();
+    std::vector<std::size_t> acceptance_rank(count);
+    for (std::size_t i = 0; i < count; ++i) {
+        const auto segment = std::span<const std::int32_t>(buffers.segment_values)
+                                 .subspan(
+                                     buffers.segment_offsets[i],
+                                     buffers.segment_offsets[i + 1] - buffers.segment_offsets[i]
+                                 );
+        const auto minimum = kernels::child_vote_min(segment, buffers.voters_offsets);
+        for (const auto point : segment) {
+            const auto begin = buffers.voters_offsets[point],
+                       end = buffers.voters_offsets[point + 1];
+            if (end - begin >= minimum) {
+                buffers.children_values.insert(
+                    buffers.children_values.end(),
+                    buffers.voters_values.begin() + begin,
+                    buffers.voters_values.begin() + end
+                );
+            }
+        }
+        const auto children = buffers.children_values.size() - buffers.children_offsets.back();
+        if (children != static_cast<std::size_t>(buffers.child_counts[i])) {
+            throw std::runtime_error(
+                "linking: reference child count disagrees with the vote graph"
+            );
+        }
+        buffers.children_offsets.push_back(
+            static_cast<std::int32_t>(buffers.children_values.size())
+        );
+        const auto seed =
+            std::find(buffers.seed_order.begin(), buffers.seed_order.end(), buffers.link_seeds[i]);
+        if (seed == buffers.seed_order.end()) {
+            throw std::runtime_error("linking: reference segment seed is absent from seed_order");
+        }
+        acceptance_rank[i] = seed - buffers.seed_order.begin();
+    }
+    buffers.loop_one_order.resize(count);
+    std::iota(buffers.loop_one_order.begin(), buffers.loop_one_order.end(), 0);
+    std::sort(buffers.loop_one_order.begin(), buffers.loop_one_order.end(), [&](auto a, auto b) {
+        return buffers.avg_vote[a] > buffers.avg_vote[b]
+            || (buffers.avg_vote[a] == buffers.avg_vote[b]
+                && acceptance_rank[a] > acceptance_rank[b]);
+    });
     if (upto == Stage::linking) {
         return;
     }
@@ -395,12 +499,63 @@ std::string describe(const Tensor& reference, const Mismatch& mismatch) {
     return out.str();
 }
 
+CandidateComparison
+compare_candidates(CandidatesHost reference_view, CandidatesHost candidate_view) {
+    const auto reference = candidate_rows(reference_view);
+    const auto candidate = candidate_rows(candidate_view);
+    CandidateComparison result;
+    std::vector<std::tuple<float, std::size_t, std::size_t>> distances;
+    for (std::size_t i = 0; i < reference.size(); ++i) {
+        for (std::size_t j = 0; j < candidate.size(); ++j) {
+            distances.emplace_back(center_distance(reference[i], candidate[j]), i, j);
+        }
+    }
+    std::sort(distances.begin(), distances.end());
+    std::vector<bool> matched_reference(reference.size()), matched_candidate(candidate.size());
+    for (const auto& [distance, i, j] : distances) {
+        if (distance > 5.f || matched_reference[i] || matched_candidate[j]) {
+            continue;
+        }
+        matched_reference[i] = matched_candidate[j] = true;
+        const auto& left = reference[i].ellipse;
+        const auto& right = candidate[j].ellipse;
+        result.center_drift = std::max(result.center_drift, distance);
+        result.passed &= distance <= 1.f;
+        for (int axis : {2, 3}) {
+            const float drift = std::abs(left[axis] - right[axis]);
+            result.axis_drift = std::max(result.axis_drift, drift);
+            result.passed &= drift <= 3.f || drift / std::abs(left[axis]) <= 0.05f;
+        }
+        if (left[2] != 0 && left[3] / left[2] > 1.1f) {
+            const float angle =
+                std::abs(std::remainder(left[4] - right[4], std::numbers::pi_v<float>));
+            result.angle_drift = std::max(result.angle_drift, angle);
+            result.passed &= angle <= 0.05f;
+        }
+    }
+    result.unmatched_reference =
+        std::count(matched_reference.begin(), matched_reference.end(), false);
+    result.extra = std::count(matched_candidate.begin(), matched_candidate.end(), false);
+    result.passed &= result.unmatched_reference == 0;
+    return result;
+}
+
+std::string describe(const CandidateComparison& comparison) {
+    std::ostringstream out;
+    out << "candidates: " << comparison.unmatched_reference << " unmatched reference rows, "
+        << comparison.extra << " extra rows; worst drift: center " << comparison.center_drift
+        << " px, axis " << comparison.axis_drift << " px, angle " << comparison.angle_drift
+        << " rad";
+    return out.str();
+}
+
 } // namespace cctag::portable::test
 
 #ifdef CCTAG_TEST
 #include <boost/ut.hpp>
 
 #include <cstdint>
+#include <limits>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -424,11 +579,118 @@ std::vector<std::uint8_t> safetensors(std::string header, const std::vector<std:
     return bytes;
 }
 
+struct CandidateFixture {
+    std::vector<float> ellipses;
+    std::vector<std::int32_t> levels;
+    std::vector<float> quality;
+
+    CandidateFixture(std::initializer_list<CandidateRow> rows) {
+        for (const auto& row : rows) {
+            ellipses.insert(ellipses.end(), row.ellipse.begin(), row.ellipse.end());
+            levels.push_back(row.level);
+            quality.push_back(row.quality);
+        }
+    }
+
+    CandidatesHost view() const {
+        return {static_cast<std::uint32_t>(levels.size()), ellipses, levels, quality};
+    }
+};
+
+CandidateComparison compare_one(std::array<float, 5> reference, std::array<float, 5> candidate) {
+    const CandidateFixture left{{reference, 0, 1.f}}, right{{candidate, 0, 1.f}};
+    return compare_candidates(left.view(), right.view());
+}
+
 } // namespace
 
 using namespace boost::ut;
 
 inline suite<"snapshot_support"> snapshot_support_suite = [] {
+    "candidate matching keeps the highest quality duplicate and allows extra rows"_test = [] {
+        const CandidateFixture reference{{{0, 0, 10, 20, 0}, 0, 5}};
+        const CandidateFixture candidate{
+            {{4, 0, 6, 12, 1}, 1, 1},
+            {{100, 0, 10, 20, 0}, 0, 1},
+            {{0, 0, 10, 20, 0}, 2, 5},
+        };
+        const auto comparison = compare_candidates(reference.view(), candidate.view());
+        expect(comparison.passed);
+        expect(eq(comparison.unmatched_reference, 0u));
+        expect(eq(comparison.extra, 1u));
+        expect(eq(comparison.center_drift, 0.f));
+    };
+
+    "candidate matching is one to one and requires every reference representative"_test = [] {
+        const CandidateFixture reference{{{0, 0, 1, 1, 0}, 0, 1}, {{1, 0, 1, 1, 0}, 0, 1}};
+        const CandidateFixture candidate{{{0.5f, 0, 1, 1, 0}, 0, 1}};
+        const auto comparison = compare_candidates(reference.view(), candidate.view());
+        expect(!comparison.passed);
+        expect(eq(comparison.unmatched_reference, 1u));
+        expect(eq(comparison.extra, 0u));
+        const CandidateFixture empty{};
+        expect(!compare_candidates(reference.view(), empty.view()).passed);
+        expect(compare_candidates(empty.view(), candidate.view()).passed);
+    };
+
+    "candidate matching distinguishes center tolerance from the pairing radius"_test = [] {
+        const std::array<float, 5> reference{0, 0, 10, 20, 0};
+        expect(compare_one(reference, {1, 0, 10, 20, 0}).passed);
+        expect(!compare_one(reference, {1.01f, 0, 10, 20, 0}).passed);
+        const auto paired = compare_one(reference, {5, 0, 10, 20, 0});
+        expect(!paired.passed);
+        expect(eq(paired.unmatched_reference, 0u));
+        const auto outside = compare_one(reference, {5.01f, 0, 10, 20, 0});
+        expect(!outside.passed);
+        expect(eq(outside.unmatched_reference, 1u));
+        expect(eq(outside.extra, 1u));
+    };
+
+    "candidate axes accept either absolute or relative tolerance"_test = [] {
+        for (const int axis : {2, 3}) {
+            std::array<float, 5> reference{0, 0, 10, 20, 0};
+            auto candidate = reference;
+            candidate[axis] += 3.f;
+            expect(compare_one(reference, candidate).passed);
+            candidate[axis] += 0.01f;
+            expect(!compare_one(reference, candidate).passed);
+            reference[axis] = 100.f;
+            candidate = reference;
+            candidate[axis] = 105.f;
+            expect(compare_one(reference, candidate).passed);
+            candidate[axis] = 105.01f;
+            expect(!compare_one(reference, candidate).passed);
+        }
+    };
+
+    "candidate angles wrap modulo pi and ignore nearly circular reference ellipses"_test = [] {
+        const std::array<float, 5> reference{0, 0, 10, 20, 0};
+        expect(compare_one(reference, {0, 0, 10, 20, 0.05f}).passed);
+        expect(!compare_one(reference, {0, 0, 10, 20, 0.0501f}).passed);
+        expect(compare_one(reference, {0, 0, 10, 20, std::numbers::pi_v<float>}).passed);
+        expect(compare_one({0, 0, 10, 11, 0}, {0, 0, 10, 11, 1}).passed);
+        expect(!compare_one({0, 0, 10, 11.01f, 0}, {0, 0, 10, 11.01f, 1}).passed);
+    };
+
+    "candidate matching rejects malformed rows and non-finite values"_test = [] {
+        const CandidateFixture reference{{{0, 0, 10, 20, 0}, 0, 1}};
+        auto malformed = reference.view();
+        malformed.ellipses = malformed.ellipses.first(4);
+        expect(throws<std::runtime_error>([&] {
+            (void)compare_candidates(reference.view(), malformed);
+        }));
+        CandidateFixture nonfinite = reference;
+        nonfinite.quality[0] = std::numeric_limits<float>::quiet_NaN();
+        expect(throws<std::runtime_error>([&] {
+            (void)compare_candidates(reference.view(), nonfinite.view());
+        }));
+        nonfinite = reference;
+        nonfinite.ellipses[0] = std::numeric_limits<float>::infinity();
+        expect(throws<std::runtime_error>([&] {
+            (void)compare_candidates(nonfinite.view(), reference.view());
+        }));
+    };
+
     "reads metadata and unaligned tensor values from hand built bytes"_test = [] {
         // Place the I16 plane at an odd byte offset to check reading unaligned values
         const std::string header =
