@@ -92,6 +92,9 @@ class Probe
   public:
     virtual ~Probe() = default;
 
+    /// False for timing-only probes, so the pipeline can skip constructing stage views
+    virtual bool observes_stages() const { return true; }
+
     virtual void pyramid(std::uint32_t pyramid_level, const Plane& source) {}
     virtual void gradient(std::uint32_t pyramid_level, const Plane& gradient_x, const Plane& gradient_y) {}
     virtual void edges(std::uint32_t pyramid_level, const Plane& edges) {}

@@ -893,7 +893,7 @@ void cctagDetection(
     // Identification step
     if (params._doIdentification)
     {
-      if (probe) probe->enter("identification");
+      if (probe) probe->enter("markers");
       CCTagVisualDebug::instance().resetMarkerIndex();
 
         const std::size_t numTags  = markers.size();
@@ -984,7 +984,7 @@ void cctagDetection(
             tagIndex++;
         }
         if( durations ) durations->log( "after cctag::identification::identify" );
-        if (probe) probe->leave("identification");
+        if (probe) probe->leave("markers");
     }
 
 #ifdef CCTAG_WITH_CUDA

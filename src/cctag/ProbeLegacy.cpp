@@ -26,6 +26,8 @@ Plane plane(const cv::Mat& matrix)
 
 void probePyramid(Probe* probe, const ImagePyramid& imagePyramid)
 {
+    if(!probe->observes_stages()) return;
+
     for(std::size_t level = 0; level < imagePyramid.getNbLevels(); ++level)
     {
         const Level* current = imagePyramid.getLevel(level);
@@ -41,6 +43,8 @@ void probeEdgePointsAndVote(Probe* probe,
                             EdgePointCollection& edgeCollection,
                             const std::vector<EdgePoint*>& seeds)
 {
+    if(!probe->observes_stages()) return;
+
     const std::size_t count = static_cast<std::size_t>(edgeCollection.get_point_count());
     std::vector<std::int32_t> xy;
     std::vector<float> gradients;
@@ -101,6 +105,8 @@ void probeLinking(Probe* probe,
                   const EdgePointCollection& edgeCollection,
                   const std::vector<std::unique_ptr<Candidate>>& candidates)
 {
+    if(!probe->observes_stages()) return;
+
     std::vector<std::int32_t> seeds;
     std::vector<std::int32_t> segmentOffsets;
     std::vector<std::int32_t> segmentValues;
@@ -139,6 +145,8 @@ void probeLinking(Probe* probe,
 
 void probeCandidates(Probe* probe, const CCTag::List& candidates)
 {
+    if(!probe->observes_stages()) return;
+
     std::vector<float> ellipses;
     std::vector<std::int32_t> levels;
     std::vector<float> quality;
@@ -164,6 +172,8 @@ void probeCandidates(Probe* probe, const CCTag::List& candidates)
 
 void probeMarkers(Probe* probe, const CCTag::List& markers)
 {
+    if(!probe->observes_stages()) return;
+
     std::vector<float> xy;
     std::vector<std::int32_t> ids;
     std::vector<std::int32_t> statuses;

@@ -109,7 +109,7 @@ void detect(
     }
 
     // Observe host views after all stages, outside the stage timings
-    if (probe) {
+    if (probe && probe->observes_stages()) {
         for (std::uint32_t level = 0; level < count; ++level) {
             const PyramidHost pyramid = Backend::host_pyramid(levels[level]);
             probe->pyramid(level, probe_plane(pyramid.src));
@@ -155,7 +155,7 @@ void detect(
         StageTiming<Backend> timing(context, probe, "candidates");
         Backend::candidates(context, params);
     }
-    if (probe) {
+    if (probe && probe->observes_stages()) {
         const CandidatesHost candidates = host_candidates(context);
         probe->candidates(
             {candidates.n,
@@ -168,7 +168,7 @@ void detect(
         StageTiming<Backend> timing(context, probe, "markers");
         Backend::markers(context, params);
     }
-    if (probe) {
+    if (probe && probe->observes_stages()) {
         const MarkersHost markers = host_markers(context);
         probe->markers({markers.n, markers.xy.data(), markers.ids.data(), markers.statuses.data()});
     }
@@ -519,6 +519,23 @@ inline suite<"host_sequence"> host_sequence_suite = [] {
         run(reused, second, w, h);
         const RecordingProbe third = run(reused, first, w, h);
         expect_identical(expected, third);
+    };
+
+    "timing only probe receives timing events without stage data"_test = [] {
+        struct TimingOnlyProbe : RecordingProbe {
+            bool observes_stages() const override {
+                return false;
+            }
+        };
+        const std::uint32_t w = 37, h = 23;
+        const auto image = test_image(w, h);
+        Context<cpu::Backend> context;
+        const RecordingProbe observed = run(context, image, w, h);
+        TimingOnlyProbe timed;
+        const Parameters params(3);
+        detect<cpu::Backend>(context, {image.data(), w, h, w}, params, &timed);
+        expect(timed.tensors.empty());
+        expect(timed.timing == observed.timing);
     };
 
     "cpu thread count does not change stage outputs"_test = [] {
