@@ -70,6 +70,7 @@ target_link_libraries(CCTag
 
 if(CCTAG_BUILD_TESTS)
   find_package(ut 2.3.1 REQUIRED CONFIG)
+  find_package(OpenSSL REQUIRED COMPONENTS Crypto)
 
   # Match the scalar OpenCV path used to produce the reference snapshots
   set(CCTAG_PORTABLE_OPENCV_CPU_DISABLE "AVX512_SKX,AVX2,FP16,AVX,SSE4_2,SSE4_1"
@@ -79,7 +80,7 @@ if(CCTAG_BUILD_TESTS)
     set(target portable_${name})
     add_executable(${target} ${ARGN})
     cctag_portable_configure(${target})
-    target_link_libraries(${target} PRIVATE CCTag Boost::ut opencv_imgproc OpenMP::OpenMP_CXX)
+    target_link_libraries(${target} PRIVATE CCTag Boost::ut opencv_imgproc OpenMP::OpenMP_CXX OpenSSL::Crypto)
     add_test(NAME ${target} COMMAND ${target})
     # Let OpenMP threads sleep between tasks to avoid spinning on tiny test images
     set_tests_properties(${target} PROPERTIES

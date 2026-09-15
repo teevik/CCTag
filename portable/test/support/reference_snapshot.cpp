@@ -12,12 +12,15 @@
 #include <boost/json.hpp>
 #include <boost/json/src.hpp>
 
+#include <openssl/evp.h>
+
 #include <algorithm>
 #include <array>
 #include <charconv>
 #include <cmath>
 #include <cstdlib>
 #include <fstream>
+#include <memory>
 #include <numbers>
 #include <numeric>
 #include <sstream>
@@ -47,6 +50,7 @@ struct CandidateRow {
     std::array<float, 5> ellipse;
     std::int32_t level;
     float quality;
+    std::size_t index = 0;
 };
 
 float center_distance(const CandidateRow& a, const CandidateRow& b) {
@@ -68,6 +72,7 @@ std::vector<CandidateRow> candidate_rows(CandidatesHost candidates) {
     for (std::size_t i = 0; i < candidates.n; ++i) {
         CandidateRow row;
         std::copy_n(candidates.ellipses.begin() + 5 * i, 5, row.ellipse.begin());
+        row.index = i;
         row.level = candidates.levels[i];
         row.quality = candidates.quality[i];
         rows.push_back(row);
@@ -520,33 +525,128 @@ compare_candidates(CandidatesHost reference_view, CandidatesHost candidate_view)
         const auto& left = reference[i].ellipse;
         const auto& right = candidate[j].ellipse;
         result.center_drift = std::max(result.center_drift, distance);
-        result.passed &= distance <= 1.f;
+        result.pairs_passed &= distance <= 1.f;
         for (int axis : {2, 3}) {
             const float drift = std::abs(left[axis] - right[axis]);
             result.axis_drift = std::max(result.axis_drift, drift);
-            result.passed &= drift <= 3.f || drift / std::abs(left[axis]) <= 0.05f;
+            result.pairs_passed &= drift <= 3.f || drift / std::abs(left[axis]) <= 0.05f;
         }
         if (left[2] != 0 && left[3] / left[2] > 1.1f) {
             const float angle =
                 std::abs(std::remainder(left[4] - right[4], std::numbers::pi_v<float>));
             result.angle_drift = std::max(result.angle_drift, angle);
-            result.passed &= angle <= 0.05f;
+            result.pairs_passed &= angle <= 0.05f;
         }
     }
-    result.unmatched_reference =
-        std::count(matched_reference.begin(), matched_reference.end(), false);
+    for (std::size_t i = 0; i < reference.size(); ++i) {
+        if (!matched_reference[i]) {
+            result.unmatched_reference.push_back(reference[i].index);
+        }
+    }
     result.extra = std::count(matched_candidate.begin(), matched_candidate.end(), false);
-    result.passed &= result.unmatched_reference == 0;
+    result.passed = result.pairs_passed && result.unmatched_reference.empty();
     return result;
 }
 
 std::string describe(const CandidateComparison& comparison) {
     std::ostringstream out;
-    out << "candidates: " << comparison.unmatched_reference << " unmatched reference rows, "
+    out << "candidates: " << comparison.unmatched_reference.size() << " unmatched reference rows, "
         << comparison.extra << " extra rows; worst drift: center " << comparison.center_drift
         << " px, axis " << comparison.axis_drift << " px, angle " << comparison.angle_drift
         << " rad";
     return out.str();
+}
+
+std::string snapshot_hash(const ReferenceSnapshot& snapshot) {
+    using Digest = std::unique_ptr<EVP_MD_CTX, decltype(&EVP_MD_CTX_free)>;
+    auto digest = [] {
+        Digest result(EVP_MD_CTX_new(), EVP_MD_CTX_free);
+        if (!result || EVP_DigestInit_ex(result.get(), EVP_sha256(), nullptr) != 1) {
+            throw std::runtime_error("cannot initialize SHA-256");
+        }
+        return result;
+    };
+    auto update = [](const Digest& hash, const void* data, std::size_t size) {
+        if (EVP_DigestUpdate(hash.get(), data, size) != 1) {
+            throw std::runtime_error("cannot update SHA-256");
+        }
+    };
+    auto finish = [](const Digest& hash) {
+        std::array<unsigned char, 32> bytes;
+        if (EVP_DigestFinal_ex(hash.get(), bytes.data(), nullptr) != 1) {
+            throw std::runtime_error("cannot finish SHA-256");
+        }
+        return bytes;
+    };
+    auto hash = digest();
+    const auto& stages = snapshot.meta("stages");
+    update(hash, stages.data(), stages.size());
+    for (const auto* name : kStageNames) {
+        const Stage stage = *parse_stage(name);
+        if (!snapshot.has(stage)) {
+            continue;
+        }
+        auto stage_hash = digest();
+        for (const auto& [key, tensor] : snapshot.tensors()) {
+            if (!key.starts_with(std::string(name) + "/")) {
+                continue;
+            }
+            update(stage_hash, key.c_str(), key.size() + 1);
+            const std::string dtype = dtype_name(tensor.dtype);
+            update(stage_hash, dtype.c_str(), dtype.size() + 1);
+            for (const auto dimension : tensor.shape) {
+                std::array<std::uint8_t, 8> bytes;
+                for (int i = 0; i < 8; ++i) {
+                    bytes[i] = static_cast<std::uint8_t>(dimension >> (8 * i));
+                }
+                update(stage_hash, bytes.data(), bytes.size());
+            }
+            update(stage_hash, "", 1);
+            update(stage_hash, tensor.bytes.data(), tensor.bytes.size());
+        }
+        const auto bytes = finish(stage_hash);
+        update(hash, bytes.data(), bytes.size());
+    }
+    std::string result = "sha256:";
+    for (const auto byte : finish(hash)) {
+        result += "0123456789abcdef"[byte >> 4];
+        result += "0123456789abcdef"[byte & 15];
+    }
+    return result;
+}
+
+CandidateAllowance CandidateAllowance::read(const std::filesystem::path& file) {
+    std::ifstream input(file);
+    if (!input) {
+        throw std::runtime_error("cannot read candidate allowance: " + file.string());
+    }
+    const std::string text{std::istreambuf_iterator<char>(input), {}};
+    const auto value = boost::json::parse(text);
+    const auto& object = value.as_object();
+    return {
+        boost::json::value_to<std::string>(object.at("variant")),
+        boost::json::value_to<std::string>(object.at("snapshot_hash")),
+        boost::json::value_to<std::size_t>(object.at("row")),
+        boost::json::value_to<std::int32_t>(object.at("level")),
+        boost::json::value_to<std::array<float, 5>>(object.at("ellipse")),
+        boost::json::value_to<std::string>(object.at("reason")),
+    };
+}
+
+bool CandidateAllowance::allows(
+    const ReferenceSnapshot& reference,
+    const CandidateComparison& comparison,
+    std::string_view candidate_variant
+) const {
+    if (candidate_variant != variant || !comparison.pairs_passed || comparison.extra != 0
+        || comparison.unmatched_reference != std::vector<std::size_t>{row}
+        || test::snapshot_hash(reference) != snapshot_hash) {
+        return false;
+    }
+    const auto levels = reference.tensor("candidates/level").as<std::int32_t>();
+    const auto ellipses = reference.tensor("candidates/ellipse").as<float>();
+    return row < levels.size() && levels[row] == level && row < ellipses.size() / 5
+        && std::equal(ellipse.begin(), ellipse.end(), ellipses.begin() + 5 * row);
 }
 
 } // namespace cctag::portable::test
@@ -607,6 +707,82 @@ CandidateComparison compare_one(std::array<float, 5> reference, std::array<float
 using namespace boost::ut;
 
 inline suite<"snapshot_support"> snapshot_support_suite = [] {
+    "snapshot content hash excludes metadata and follows the canonical byte contract"_test = [] {
+        const std::string header =
+            R"({"pyramid/level0/src":{"dtype":"U8","shape":[1,3],"data_offsets":[0,3]},)"
+            R"("__metadata__":{"stages":"pyramid","problem":"test"}})";
+        const auto snapshot = ReferenceSnapshot::from_bytes(safetensors(header, {1, 2, 3}));
+        expect(eq(
+            snapshot_hash(snapshot),
+            std::string{"sha256:5ed943897df4f73004d2f3bc1d304280805dd0b89db1ba7c19fb33ff9fc5d972"}
+        ));
+        auto renamed = header;
+        renamed.replace(renamed.find("test"), 4, "renamed");
+        expect(
+            eq(snapshot_hash(snapshot),
+               snapshot_hash(ReferenceSnapshot::from_bytes(safetensors(renamed, {1, 2, 3}))))
+        );
+        expect(
+            snapshot_hash(snapshot)
+            != snapshot_hash(ReferenceSnapshot::from_bytes(safetensors(header, {1, 2, 4})))
+        );
+    };
+
+    "candidate allowance accepts only its missing raw row and preserves other failures"_test = [] {
+        const CandidateFixture reference{{{100, 0, 1, 2, 0}, 1, 1}, {{0, 0, 1, 2, 0}, 0, 1}};
+        const CandidateFixture candidate{{{0, 0, 1, 2, 0}, 0, 1}};
+        const std::string header =
+            R"({"candidates/ellipse":{"dtype":"F32","shape":[2,5],"data_offsets":[0,40]},)"
+            R"("candidates/level":{"dtype":"I32","shape":[2],"data_offsets":[40,48]},)"
+            R"("candidates/quality":{"dtype":"F32","shape":[2],"data_offsets":[48,56]},)"
+            R"("__metadata__":{"stages":"candidates"}})";
+        std::vector<std::uint8_t> data(56);
+        std::memcpy(data.data(), reference.ellipses.data(), 40);
+        std::memcpy(data.data() + 40, reference.levels.data(), 8);
+        std::memcpy(data.data() + 48, reference.quality.data(), 8);
+        const auto snapshot = ReferenceSnapshot::from_bytes(safetensors(header, data));
+        const CandidateAllowance
+            allowance{"test/cpu", snapshot_hash(snapshot), 0, 1, {100, 0, 1, 2, 0}, "reviewed"};
+        const auto comparison = compare_candidates(reference.view(), candidate.view());
+        expect(!comparison.passed);
+        expect(comparison.unmatched_reference == std::vector<std::size_t>{0});
+        expect(allowance.allows(snapshot, comparison, "test/cpu"));
+        expect(!comparison.passed); // Acceptance never changes the raw verdict
+        expect(!allowance.allows(snapshot, comparison, "another/cpu"));
+        for (int changed = 0; changed < 4; ++changed) {
+            auto stale = allowance;
+            if (changed == 0) {
+                stale.snapshot_hash += "0";
+            }
+            if (changed == 1) {
+                stale.row = 1;
+            }
+            if (changed == 2) {
+                stale.level = 0;
+            }
+            if (changed == 3) {
+                stale.ellipse[0] += 1;
+            }
+            expect(!stale.allows(snapshot, comparison, "test/cpu"));
+        }
+        data[55] ^= 1; // Even an unrelated tensor change invalidates the snapshot pin
+        const auto moved = ReferenceSnapshot::from_bytes(safetensors(header, data));
+        expect(!allowance.allows(moved, comparison, "test/cpu"));
+        for (const CandidateFixture& bad : {
+                 CandidateFixture{},
+                 CandidateFixture{{{100, 0, 1, 2, 0}, 1, 1}},
+                 CandidateFixture{{{2, 0, 1, 2, 0}, 0, 1}},
+                 CandidateFixture{{{0, 0, 1, 6, 0}, 0, 1}},
+                 CandidateFixture{{{0, 0, 1, 2, 0}, 0, 1}, {{200, 0, 1, 2, 0}, 0, 1}},
+             }) {
+            expect(!allowance.allows(
+                snapshot,
+                compare_candidates(reference.view(), bad.view()),
+                "test/cpu"
+            ));
+        }
+    };
+
     "candidate matching keeps the highest quality duplicate and allows extra rows"_test = [] {
         const CandidateFixture reference{{{0, 0, 10, 20, 0}, 0, 5}};
         const CandidateFixture candidate{
@@ -616,7 +792,7 @@ inline suite<"snapshot_support"> snapshot_support_suite = [] {
         };
         const auto comparison = compare_candidates(reference.view(), candidate.view());
         expect(comparison.passed);
-        expect(eq(comparison.unmatched_reference, 0u));
+        expect(eq(comparison.unmatched_reference.size(), 0u));
         expect(eq(comparison.extra, 1u));
         expect(eq(comparison.center_drift, 0.f));
     };
@@ -626,7 +802,7 @@ inline suite<"snapshot_support"> snapshot_support_suite = [] {
         const CandidateFixture candidate{{{0.5f, 0, 1, 1, 0}, 0, 1}};
         const auto comparison = compare_candidates(reference.view(), candidate.view());
         expect(!comparison.passed);
-        expect(eq(comparison.unmatched_reference, 1u));
+        expect(eq(comparison.unmatched_reference.size(), 1u));
         expect(eq(comparison.extra, 0u));
         const CandidateFixture empty{};
         expect(!compare_candidates(reference.view(), empty.view()).passed);
@@ -639,10 +815,10 @@ inline suite<"snapshot_support"> snapshot_support_suite = [] {
         expect(!compare_one(reference, {1.01f, 0, 10, 20, 0}).passed);
         const auto paired = compare_one(reference, {5, 0, 10, 20, 0});
         expect(!paired.passed);
-        expect(eq(paired.unmatched_reference, 0u));
+        expect(eq(paired.unmatched_reference.size(), 0u));
         const auto outside = compare_one(reference, {5.01f, 0, 10, 20, 0});
         expect(!outside.passed);
-        expect(eq(outside.unmatched_reference, 1u));
+        expect(eq(outside.unmatched_reference.size(), 1u));
         expect(eq(outside.extra, 1u));
     };
 

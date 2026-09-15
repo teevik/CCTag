@@ -14,6 +14,7 @@
 #include "host/context.hpp"
 #include "kernels/plane.hpp"
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -23,6 +24,7 @@
 #include <span>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace cctag::portable::test {
@@ -267,7 +269,9 @@ std::string describe(const Tensor& reference, const Mismatch& mismatch);
 /// Candidate comparison after canonicalization, quality-based deduplication and nearest pairing
 struct CandidateComparison {
     bool passed = true;
-    std::size_t unmatched_reference = 0;
+    bool pairs_passed = true;
+    /// Raw reference row indices retained through canonicalization and deduplication
+    std::vector<std::size_t> unmatched_reference;
     std::size_t extra = 0;
     float center_drift = 0;
     float axis_drift = 0;
@@ -277,6 +281,27 @@ struct CandidateComparison {
 /// Applies stage-snapshot's Rules::Tolerant candidate contract; rejects malformed views
 CandidateComparison compare_candidates(CandidatesHost reference, CandidatesHost candidate);
 std::string describe(const CandidateComparison& comparison);
+
+/// Canonical, metadata-independent hash used by stage-snapshot's snapshot_hash
+std::string snapshot_hash(const ReferenceSnapshot& snapshot);
+
+/// An externally reviewed allowance for one missing candidate in one snapshot and variant
+struct CandidateAllowance {
+    std::string variant;
+    std::string snapshot_hash;
+    std::size_t row;
+    std::int32_t level;
+    std::array<float, 5> ellipse;
+    std::string reason;
+
+    static CandidateAllowance read(const std::filesystem::path& file);
+    /// Requires the named row to be the only difference; keeps the raw comparison unchanged
+    bool allows(
+        const ReferenceSnapshot& reference,
+        const CandidateComparison& comparison,
+        std::string_view candidate_variant
+    ) const;
+};
 
 } // namespace cctag::portable::test
 

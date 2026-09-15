@@ -19,6 +19,7 @@
 
 #include <algorithm>
 #include <cstdint>
+#include <cstdlib>
 #include <iostream>
 #include <vector>
 
@@ -196,7 +197,17 @@ int main(int argc, const char** argv) {
                     {static_cast<std::uint32_t>(levels.size()), ellipses, levels, quality},
                     host_candidates(context)
                 );
-                expect(comparison.passed) << snapshot.problem() << describe(comparison);
+                bool accepted = comparison.passed;
+                if (const char* file = std::getenv("CCTAG_CANDIDATE_ALLOWANCE");
+                    !accepted && file) {
+                    const auto allowance = CandidateAllowance::read(file);
+                    accepted = allowance.allows(snapshot, comparison, "fork/cpu");
+                    if (accepted) {
+                        std::cout << snapshot.problem() << ": " << describe(comparison)
+                                  << "; accepted: " << allowance.reason << '\n';
+                    }
+                }
+                expect(accepted) << snapshot.problem() << describe(comparison);
             }
         };
         "pyramid matches reference snapshot from each reference finer level"_test = [] {
