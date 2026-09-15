@@ -20,7 +20,7 @@
 #include <span>
 #include <stdexcept>
 
-namespace cctag::portable::cpu {
+namespace cctag::portable {
 namespace {
 
 using Image = kernels::Plane<const std::uint8_t>;
@@ -534,7 +534,8 @@ void update(std::vector<Marker>& markers, const Marker& marker) {
 
 } // namespace
 
-void Backend::markers(Context<Backend>& context, const Parameters& params) {
+void prototype_markers(PrototypeHostState& context,
+    kernels::Plane<const std::uint8_t> image, const Parameters& params) {
     if (params._doIdentification
         && (params._sampleCutLength <= 30 || params._numSamplesOuterEdgePointsRefinement < 2
             || params._imagedCenterNGridSample < 5 || params._imagedCenterNGridSample % 2 == 0
@@ -548,7 +549,6 @@ void Backend::markers(Context<Backend>& context, const Parameters& params) {
     if (context.identification.size() < count) {
         context.identification.resize(count);
     }
-    const Image image = host_pyramid(context.levels[0]).src;
 #pragma omp parallel for schedule(dynamic, 1)
     for (int i = 0; i < static_cast<int>(count); ++i) {
         identify(
@@ -582,6 +582,12 @@ void Backend::markers(Context<Backend>& context, const Parameters& params) {
     }
 }
 
+} // namespace cctag::portable
+
+namespace cctag::portable::cpu {
+void Backend::markers(Context<Backend>& context, const Parameters& params) {
+    prototype_markers(context, host_pyramid(context.levels[0]).src, params);
+}
 } // namespace cctag::portable::cpu
 
 #ifdef CCTAG_TEST

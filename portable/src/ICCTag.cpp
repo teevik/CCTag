@@ -18,6 +18,11 @@
 namespace cctag::portable {
 using SelectedBackend = cpu::Backend;
 }
+#elif defined(CCTAG_PORTABLE_BACKEND_SYCL)
+#include "backends/prototype_sycl/backend.hpp"
+namespace cctag::portable {
+using SelectedBackend = prototype_sycl::Backend;
+}
 #else
 #error "CCTAG_PORTABLE_BACKEND_<NAME> must be defined for exactly one execution backend"
 #endif
@@ -87,6 +92,13 @@ SelectedContext& context_for(int pipeId) {
 }
 
 } // namespace
+
+// THROWAWAY: prototype consumers release retained Contexts before runtime shutdown.
+// The integration decision must settle the public ownership/destruction boundary.
+void prototypeReleaseContexts() {
+    const std::lock_guard<std::mutex> lock(registry_mutex);
+    registry.clear();
+}
 
 void cctagDetection(
     boost::ptr_list<ICCTag>& markers,

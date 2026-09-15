@@ -17,6 +17,7 @@
 #include <cctag/Probe.hpp>
 
 #include <cstdint>
+#include <cstdlib>
 
 namespace cctag::portable {
 
@@ -27,13 +28,13 @@ class StageTiming {
   public:
     StageTiming(Context<Backend>& context, Probe* probe, const char* stage) :
         context(context),
-        probe(probe),
+        probe(std::getenv("PROTOTYPE_SYCL_UNTIMED_SNAPSHOT") ? nullptr : probe),
         stage(stage) {
-        if (probe) {
-            probe->enter(stage);
+        if (this->probe) {
+            this->probe->enter(stage);
         }
     }
-    ~StageTiming() {
+    void finish() {
         if (probe) {
             Backend::wait(context);
             probe->leave(stage);
@@ -57,6 +58,7 @@ void detect(
     Probe* probe
 ) {
     context.ensure(input.width, input.height, params);
+    try {
     auto& levels = context.levels;
     const std::uint32_t count = static_cast<std::uint32_t>(levels.size());
 
@@ -67,6 +69,7 @@ void detect(
         for (std::uint32_t level = 1; level < count; ++level) {
             Backend::pyramid(levels[level], levels[level - 1]);
         }
+        timing.finish();
     }
     // Compute gradients at every pyramid level
     {
@@ -74,6 +77,7 @@ void detect(
         for (std::uint32_t level = 0; level < count; ++level) {
             Backend::gradient(levels[level]);
         }
+        timing.finish();
     }
 
     // Find and thin edges at every pyramid level
@@ -82,6 +86,7 @@ void detect(
         for (std::uint32_t level = 0; level < count; ++level) {
             Backend::edges(levels[level], params);
         }
+        timing.finish();
     }
 
     // Collect edge points in canonical order at every pyramid level
@@ -90,6 +95,7 @@ void detect(
         for (std::uint32_t level = 0; level < count; ++level) {
             Backend::edge_points(levels[level]);
         }
+        timing.finish();
     }
 
     // Link edge points and gather their votes at every pyramid level
@@ -98,6 +104,7 @@ void detect(
         for (std::uint32_t level = 0; level < count; ++level) {
             Backend::vote(levels[level], params);
         }
+        timing.finish();
     }
 
     // Walk seeds and gather segments at every pyramid level
@@ -106,6 +113,7 @@ void detect(
         for (std::uint32_t level = 0; level < count; ++level) {
             Backend::linking(levels[level], params);
         }
+        timing.finish();
     }
 
     // Observe host views after all stages, outside the stage timings
@@ -154,6 +162,7 @@ void detect(
     {
         StageTiming<Backend> timing(context, probe, "candidates");
         Backend::candidates(context, params);
+        timing.finish();
     }
     if (probe && probe->observes_stages()) {
         const CandidatesHost candidates = host_candidates(context);
@@ -167,10 +176,16 @@ void detect(
     {
         StageTiming<Backend> timing(context, probe, "markers");
         Backend::markers(context, params);
+        timing.finish();
     }
     if (probe && probe->observes_stages()) {
         const MarkersHost markers = host_markers(context);
         probe->markers({markers.n, markers.xy.data(), markers.ids.data(), markers.statuses.data()});
+    }
+    Backend::wait(context);
+    } catch (...) {
+        if constexpr (requires { Backend::invalidate(context); }) Backend::invalidate(context);
+        throw;
     }
 }
 

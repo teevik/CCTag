@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 3.20)
 
 set(CCTAG_PORTABLE_BACKEND "cpu" CACHE STRING "Execution backend of the portable pipeline: cpu")
 set_property(CACHE CCTAG_PORTABLE_BACKEND PROPERTY STRINGS cpu)
-if(NOT CCTAG_PORTABLE_BACKEND STREQUAL "cpu")
+if(NOT CCTAG_PORTABLE_BACKEND MATCHES "^(cpu|sycl)$")
   message(FATAL_ERROR "CCTAG_PORTABLE_BACKEND must be 'cpu', got '${CCTAG_PORTABLE_BACKEND}'")
 endif()
 
@@ -25,6 +25,16 @@ add_library(CCTag
     src/backends/cpu/linking.cpp
     src/backends/cpu/candidates.cpp
     src/backends/cpu/markers.cpp)
+
+# THROWAWAY: compile only the device-containing translation unit through AdaptiveCpp.
+if(CCTAG_PORTABLE_BACKEND STREQUAL "sycl")
+  find_package(AdaptiveCpp REQUIRED CONFIG)
+  add_library(prototype_sycl OBJECT src/backends/prototype_sycl/backend.cpp)
+  set_target_properties(prototype_sycl PROPERTIES POSITION_INDEPENDENT_CODE ON)
+  target_sources(CCTag PRIVATE $<TARGET_OBJECTS:prototype_sycl>)
+  target_link_libraries(CCTag PRIVATE AdaptiveCpp::acpp-rt)
+  add_sycl_to_target(TARGET prototype_sycl SOURCES src/backends/prototype_sycl/backend.cpp)
+endif()
 
 find_package(OpenMP REQUIRED COMPONENTS CXX)
 set(THREADS_PREFER_PTHREAD_FLAG ON)
@@ -67,6 +77,15 @@ target_link_libraries(CCTag
       opencv_imgproc
       OpenMP::OpenMP_CXX
       Threads::Threads)
+
+if(CCTAG_PORTABLE_BACKEND STREQUAL "sycl")
+  cctag_portable_configure(prototype_sycl)
+  target_compile_options(prototype_sycl PRIVATE -fno-fast-math)
+  target_include_directories(prototype_sycl PRIVATE
+    ${PROJECT_SOURCE_DIR}/src ${generated_dir})
+  target_link_libraries(prototype_sycl PRIVATE opencv_core Eigen3::Eigen Boost::filesystem
+    Boost::serialization OpenMP::OpenMP_CXX Threads::Threads)
+endif()
 
 if(CCTAG_BUILD_TESTS)
   find_package(ut 2.3.1 REQUIRED CONFIG)
@@ -114,4 +133,10 @@ if(CCTAG_BUILD_TESTS)
       test/stage_isolation.cpp
       test/support/reference_snapshot.cpp)
   set_tests_properties(portable_stage_isolation PROPERTIES SKIP_RETURN_CODE 77)
+  if(CCTAG_PORTABLE_BACKEND STREQUAL "sycl")
+    add_executable(sycl-gradient-isolation prototype-sycl/isolation.cpp test/support/reference_snapshot.cpp)
+    cctag_portable_configure(sycl-gradient-isolation)
+    target_include_directories(sycl-gradient-isolation PRIVATE test)
+    target_link_libraries(sycl-gradient-isolation PRIVATE CCTag OpenMP::OpenMP_CXX OpenSSL::Crypto)
+  endif()
 endif()

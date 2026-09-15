@@ -17,17 +17,14 @@
 #include <algorithm>
 #include <bit>
 #include <cstdint>
+#include <memory>
 #include <stdexcept>
 #include <vector>
 
 namespace cctag::portable {
 
-/// Holds one detection pipe's stage buffers and reuses them between frames
-template <class Backend>
-struct Context {
-    std::uint32_t width = 0;
-    std::uint32_t height = 0;
-    std::vector<typename Backend::Buffers> levels;
+// THROWAWAY: exactly one host-state owner, shared by both stage implementations.
+struct PrototypeHostState {
     std::vector<CandidateLevel> candidate_levels;
     std::vector<CandidateMarker> candidate_markers;
     /// Contiguous probe rows, filled from the raw candidate markers
@@ -42,6 +39,17 @@ struct Context {
     std::vector<float> marker_xy;
     std::vector<std::int32_t> marker_ids;
     std::vector<std::int32_t> marker_statuses;
+
+};
+
+/// Holds one detection pipe's stage buffers and reuses them between frames
+template <class Backend>
+struct Context : PrototypeHostState {
+    std::unique_ptr<typename Backend::ExecutionState> execution =
+        std::make_unique<typename Backend::ExecutionState>();
+    std::uint32_t width = 0;
+    std::uint32_t height = 0;
+    std::vector<typename Backend::Buffers> levels;
 
     void ensure(std::uint32_t input_width, std::uint32_t input_height, const Parameters& params) {
         const std::size_t count = params._numberOfProcessedMultiresLayers;
@@ -59,10 +67,12 @@ struct Context {
         }
 
         // Resize the stage buffers when the input dimensions or level count change
+        Backend::wait(*this);
         levels.resize(count);
         std::uint32_t level_width = input_width;
         std::uint32_t level_height = input_height;
         for (auto& level : levels) {
+            level.bind(*execution);
             level.ensure(level_width, level_height, input_width, input_height);
             level_width /= 2;
             level_height /= 2;

@@ -12,9 +12,12 @@
 #include <array>
 #include <cmath>
 #include <limits>
+#include <cstdlib>
+#include <iostream>
+#include <iomanip>
 #include <span>
 
-namespace cctag::portable::cpu {
+namespace cctag::portable {
 
 namespace {
 
@@ -173,7 +176,7 @@ bool good_growing_points(EdgePointsHost points, std::span<const std::int32_t> ch
     return false;
 }
 
-bool grow_hull(const Buffers& level, EdgePointsHost points, CandidateSlot& slot, float width) {
+bool grow_hull(const PrototypeCandidateInput& level, EdgePointsHost points, CandidateSlot& slot, float width) {
     Ellipse inner, outer;
     if (!ellipse_hull(slot.ellipse, width, inner, outer)) {
         return false;
@@ -199,7 +202,7 @@ bool grow_hull(const Buffers& level, EdgePointsHost points, CandidateSlot& slot,
                 || y >= static_cast<int>(level.height)) {
                 continue;
             }
-            const auto index = level.edge_map(y, x);
+            const auto index = level.edge_map.row(y)[x];
             if (index < 0 || slot.processed[index] || !in_hull(inner, outer, x, y)) {
                 continue;
             }
@@ -213,7 +216,7 @@ bool grow_hull(const Buffers& level, EdgePointsHost points, CandidateSlot& slot,
     return true;
 }
 
-bool grow_ellipse(const Buffers& level, EdgePointsHost points, CandidateSlot& slot, float width) {
+bool grow_ellipse(const PrototypeCandidateInput& level, EdgePointsHost points, CandidateSlot& slot, float width) {
     slot.fit.next_circle = 0;
     const bool good_init = good_growing_points(points, slot.filtered_children);
     copy_fit_points(points, slot.filtered_children, slot);
@@ -289,7 +292,7 @@ bool grow_ellipse(const Buffers& level, EdgePointsHost points, CandidateSlot& sl
 }
 
 void complete_flow_component(
-    const Buffers& level,
+    const PrototypeCandidateInput& level,
     EdgePointsHost points,
     std::span<const std::int32_t> children,
     CandidateSlot& slot,
@@ -298,6 +301,7 @@ void complete_flow_component(
     if (children.size() < params._minPointsSegmentCandidate) {
         return;
     }
+    const auto prototype_initial_random = slot.random;
     slot.score = children.size();
     remove_outliers(
         points,
@@ -319,6 +323,17 @@ void complete_flow_component(
         static_cast<float>(slot.outer_points.size()) / ellipse_perimeter(slot.ellipse);
     const float ratio = slot.ellipse.a / slot.ellipse.b;
     slot.accepted = quality <= 1.1 && ratio >= 0.05 && ratio <= 20;
+    if (std::getenv("PROTOTYPE_SYCL_CANDIDATE_EVIDENCE") && slot.seed == 24544
+        && level.width == 960 && level.height == 720) {
+        std::cerr << std::setprecision(9) << "PROTOTYPE_CANDIDATE seed=" << slot.seed
+                  << " level=1 state=" << prototype_initial_random.state
+                  << " increment=" << prototype_initial_random.increment
+                  << " filtered=" << slot.filtered_children.size()
+                  << " grown=" << slot.outer_points.size()
+                  << " ellipse=" << slot.ellipse.cx << "," << slot.ellipse.cy
+                  << "," << slot.ellipse.a << "," << slot.ellipse.b
+                  << " ratio=" << ratio << " cutoff=0.05 accepted=" << slot.accepted << '\n';
+    }
 }
 
 /// Walks the alternating links from the outer ring and checks the inner gradient orientations
@@ -660,19 +675,21 @@ void refit_at_level_zero(EdgePointsHost points, int width, int height, Candidate
 
 } // namespace
 
-void Backend::candidates(Context<Backend>& context, const Parameters& params) {
-    context.candidate_levels.resize(context.levels.size());
+void prototype_candidates(PrototypeHostState& context,
+    std::span<const PrototypeCandidateInput> levels, std::uint32_t width,
+    std::uint32_t height, const Parameters& params) {
+    context.candidate_levels.resize(levels.size());
     std::size_t marker_count = 0;
-    for (int index = static_cast<int>(context.levels.size()) - 1; index >= 0; --index) {
-        auto& level = context.levels[index];
+    for (int index = static_cast<int>(levels.size()) - 1; index >= 0; --index) {
+        auto& level = levels[index];
         auto& candidates = context.candidate_levels[index];
         const auto count =
             std::min(level.loop_one_order.size(), params._maximumNbCandidatesLoopTwo);
         if (candidates.slots.size() < count) {
             candidates.slots.resize(count);
         }
-        const EdgePointsHost points = host_edge_points(level);
-        const VoteHost vote = host_vote(level);
+        const EdgePointsHost points = level.points;
+        const VoteHost vote = level.vote;
         const std::span<CandidateSlot> slots(candidates.slots.data(), count);
         for (std::size_t i = 0; i < count; ++i) {
             auto& slot = slots[i];
@@ -738,11 +755,11 @@ void Backend::candidates(Context<Backend>& context, const Parameters& params) {
     }
 
     // Refit through level zero's host view after every level's candidate markers are known
-    const EdgePointsHost points = host_edge_points(context.levels[0]);
-    for (int index = static_cast<int>(context.levels.size()) - 1; index >= 0; --index) {
+    const EdgePointsHost points = levels[0].points;
+    for (int index = static_cast<int>(levels.size()) - 1; index >= 0; --index) {
         auto& slots = context.candidate_levels[index].slots;
         const auto count = std::min(
-            context.levels[index].loop_one_order.size(),
+            levels[index].loop_one_order.size(),
             params._maximumNbCandidatesLoopTwo
         );
         for (std::size_t i = 0; i < count; ++i) {
@@ -750,7 +767,7 @@ void Backend::candidates(Context<Backend>& context, const Parameters& params) {
             if (!slot.has_marker) {
                 continue;
             }
-            refit_at_level_zero(points, context.width, context.height, slot);
+            refit_at_level_zero(points, width, height, slot);
             if (marker_count == context.candidate_markers.size()) {
                 context.candidate_markers.emplace_back();
             }
@@ -760,4 +777,12 @@ void Backend::candidates(Context<Backend>& context, const Parameters& params) {
     context.candidate_markers.resize(marker_count);
 }
 
+} // namespace cctag::portable
+
+namespace cctag::portable::cpu {
+void Backend::candidates(Context<Backend>& context, const Parameters& params) {
+    std::vector<PrototypeCandidateInput> inputs;
+    for (auto& level : context.levels) inputs.push_back(prototype_candidate_input(level));
+    prototype_candidates(context, inputs, context.width, context.height, params);
+}
 } // namespace cctag::portable::cpu

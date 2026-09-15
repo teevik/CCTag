@@ -55,5 +55,9 @@ if("@CCTAG_PIPELINE@" STREQUAL "portable")
   find_dependency(Threads)
 endif()
 
+if("@CCTAG_PORTABLE_BACKEND@" STREQUAL "sycl")
+  find_dependency(AdaptiveCpp CONFIG)
+endif()
+
 include("${CMAKE_CURRENT_LIST_DIR}/@targets_export_name@.cmake")
 check_required_components("@PROJECT_NAME@")

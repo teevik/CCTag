@@ -10,6 +10,7 @@
 
 #include "host/backend.hpp"
 #include "host/views.hpp"
+#include "host/prototype_stage_inputs.hpp"
 #include "kernels/linking.hpp"
 #include "kernels/plane.hpp"
 
@@ -22,6 +23,8 @@ namespace cctag::portable::cpu {
 
 /// Maximum number of edge points in one pyramid level
 inline constexpr std::uint32_t kMaxEdgePoints = 1u << 24;
+
+struct ExecutionState {};
 
 /// Holds one pyramid level's buffers
 struct Buffers {
@@ -88,6 +91,7 @@ struct Buffers {
     /// Pixels still to visit in the hysteresis flood
     std::vector<std::uint8_t*> hysteresis_stack;
 
+    void bind(ExecutionState&) {}
     Buffers() = default;
     Buffers(Buffers&&) noexcept = default;
     Buffers& operator=(Buffers&&) noexcept = default;
@@ -115,9 +119,20 @@ struct Buffers {
     }
 };
 
+inline PrototypeCandidateInput prototype_candidate_input(Buffers& level) {
+    return {level.width, level.height, level.n,
+        {level.n, level.xy, level.gradients},
+        {level.links, level.voters_offsets, level.voters_values, level.is_max,
+         level.flow_length, level.seeds, level.seed_order},
+        {level.edge_map[0], level.width, level.height, level.edge_map.step1()},
+        level.link_seeds, level.loop_one_order, level.children_offsets,
+        level.children_values, level.child_counts};
+}
+
 /// The CPU execution backend, implementing ExecutionBackend
 struct Backend {
     using Buffers = cpu::Buffers;
+    using ExecutionState = cpu::ExecutionState;
 
     /// Copies the input grayscale image into `level0.src`
     static void load(Buffers& level0, kernels::Plane<const std::uint8_t> input);
