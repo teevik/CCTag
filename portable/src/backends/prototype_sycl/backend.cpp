@@ -29,7 +29,7 @@ sycl::device selected_device() {
         const auto name = device.get_info<sycl::info::device::name>();
         if ((wanted == "cpu" && device.is_cpu())
             || (wanted == "cuda" && name.find("RTX 4090") != std::string::npos)
-            || (wanted == "hip" && name.find("gfx1032") != std::string::npos))
+            || (wanted == "hip" && (name.find("gfx1032") != std::string::npos || name == "AMD Radeon RX 6800S")))
             matches.push_back(device);
     }
     if (matches.size() != 1) throw std::runtime_error("required SYCL platform missing or ambiguous");

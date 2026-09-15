@@ -21,7 +21,7 @@ int main(int argc, char** argv) {
                           << " host_usm=" << device.has(sycl::aspect::usm_host_allocations) << '\n';
                 const bool selected = (wanted == "cpu" && device.is_cpu())
                     || (wanted == "cuda" && name.find("RTX 4090") != std::string::npos)
-                    || (wanted == "hip" && name.find("gfx1032") != std::string::npos);
+                    || (wanted == "hip" && (name.find("gfx1032") != std::string::npos || name == "AMD Radeon RX 6800S"));
                 if (selected) matches.push_back(device);
             }
         }
