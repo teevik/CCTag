@@ -29,7 +29,6 @@ struct CandidateMarker {
     float scale = 1;
     float quality = 0;
     Eigen::Vector2f center = Eigen::Vector2f::Zero();
-    Ellipse outer_ellipse;
     Ellipse rescaled_outer_ellipse;
     std::vector<DirectedPoint> outer_points;
 };
@@ -60,7 +59,8 @@ struct CandidateSlot {
     std::vector<Eigen::Vector2f> fit_points;
     std::vector<float> distances;
     EllipseFitScratch fit;
-    std::vector<std::vector<DirectedPoint>> rings;
+    /// Outer-ring points accumulated while validating and assembling flow components
+    std::vector<DirectedPoint> flow_outer_points;
     CandidateMarker marker;
 };
 

@@ -332,9 +332,8 @@ bool add_flow(
     CandidateSlot& slot
 ) {
     clear_marks(slot);
-    slot.rings.resize(circles);
     for (const auto index : outer_points) {
-        slot.rings.back().push_back(directed_point(points, index));
+        slot.flow_outer_points.push_back(directed_point(points, index));
     }
     std::size_t gradient_out = 0, added = 0;
     bool valid = true;
@@ -369,7 +368,6 @@ bool add_flow(
                         < -0.5f;
                     ++added;
                 }
-                slot.rings[circles - ring - 1].push_back(directed_point(points, index));
             }
             direction = -direction;
         }
@@ -379,9 +377,7 @@ bool add_flow(
     }
     clear_marks(slot);
     if (!valid || static_cast<float>(gradient_out) / static_cast<float>(added) > 0.5f) {
-        for (auto& ring : slot.rings) {
-            ring.clear();
-        }
+        slot.flow_outer_points.clear();
         return false;
     }
     return true;
@@ -469,9 +465,7 @@ void make_candidate(
     Ellipse ellipse = slot.ellipse;
     std::span<const std::int32_t> outer_points = slot.outer_points;
     float quality = static_cast<float>(outer_points.size()) / ellipse_perimeter(ellipse);
-    for (auto& ring : slot.rings) {
-        ring.clear();
-    }
+    slot.flow_outer_points.clear();
     if (params._searchForAnotherSegment && quality > 0.25 && quality < 0.7) {
         const auto seed = position(points, slot.seed);
         const float flow = vote.flow_length[slot.seed];
@@ -547,7 +541,9 @@ void make_candidate(
     marker.quality = gradient_quality * scale;
     marker.center = {ellipse.cx, ellipse.cy};
     // CCTag's constructor shifts the fitted ellipse by half a pixel before rescaling
-    if (!marker.outer_ellipse.set_parameters(
+    // Preserve validation at the original level without retaining that representation
+    Ellipse shifted_outer;
+    if (!shifted_outer.set_parameters(
             ellipse.cx + 0.5f,
             ellipse.cy + 0.5f,
             ellipse.a,
@@ -564,7 +560,7 @@ void make_candidate(
         return;
     }
     marker.outer_points.clear();
-    for (auto point : slot.rings.back()) {
+    for (auto point : slot.flow_outer_points) {
         point.x *= scale;
         point.y *= scale;
         marker.outer_points.push_back(point);
