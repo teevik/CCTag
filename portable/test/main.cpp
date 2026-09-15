@@ -7,6 +7,11 @@
  */
 #include <boost/ut.hpp>
 
+namespace cctag { void prototypeReleaseContexts(); }
+
 int main(int argc, const char** argv) {
-    return boost::ut::cfg<boost::ut::override>.run({.argc = argc, .argv = argv});
+    const auto status = boost::ut::cfg<boost::ut::override>.run({.argc = argc, .argv = argv});
+    // THROWAWAY: consumers explicitly release Contexts before runtime teardown.
+    cctag::prototypeReleaseContexts();
+    return status;
 }

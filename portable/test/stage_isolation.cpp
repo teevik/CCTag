@@ -38,6 +38,8 @@ std::vector<std::filesystem::path> snapshot_files_or_fail() {
 
 } // namespace
 
+namespace cctag { void prototypeReleaseContexts(); }
+
 int main(int argc, const char** argv) {
     if (!reference_snapshots_dir()) {
         std::cout << "CCTAG_REFERENCE_SNAPSHOTS is not set: enter `nix develop` or point it "
@@ -349,5 +351,8 @@ int main(int argc, const char** argv) {
             }
         };
     };
-    return cfg<override>.run({.argc = argc, .argv = argv});
+    const auto status = cfg<override>.run({.argc = argc, .argv = argv});
+    // THROWAWAY: consumers explicitly release Contexts before runtime teardown.
+    cctag::prototypeReleaseContexts();
+    return status;
 }
