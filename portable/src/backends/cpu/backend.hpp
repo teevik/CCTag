@@ -135,6 +135,7 @@ struct Backend {
     static void linking(Buffers& level, const Parameters& params);
     /// Fits candidate markers across levels and refits their outer ellipses at level zero
     static void candidates(Context<Backend>& context, const Parameters& params);
+    static void markers(Context<Backend>& context, const Parameters& params);
 
     static PyramidHost host_pyramid(Buffers& level);
     static GradientHost host_gradient(Buffers& level);

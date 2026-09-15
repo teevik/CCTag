@@ -9,6 +9,7 @@
 #define CCTAG_PORTABLE_HOST_CONTEXT_HPP
 
 #include "host/candidates.hpp"
+#include "host/markers.hpp"
 #include "host/views.hpp"
 
 #include <cctag/Params.hpp>
@@ -33,6 +34,14 @@ struct Context {
     std::vector<float> candidate_ellipses;
     std::vector<std::int32_t> candidate_pyramid_levels;
     std::vector<float> candidate_quality;
+    MarkerBank bank;
+    std::vector<IdentificationScratch> identification;
+    std::vector<Marker> identified_markers;
+    std::vector<Marker> preliminary_markers;
+    std::vector<Marker> markers;
+    std::vector<float> marker_xy;
+    std::vector<std::int32_t> marker_ids;
+    std::vector<std::int32_t> marker_statuses;
 
     void ensure(std::uint32_t input_width, std::uint32_t input_height, const Parameters& params) {
         const std::size_t count = params._numberOfProcessedMultiresLayers;
@@ -83,6 +92,25 @@ CandidatesHost host_candidates(Context<Backend>& context) {
         context.candidate_ellipses,
         context.candidate_pyramid_levels,
         context.candidate_quality
+    };
+}
+
+/// Builds the final detection-candidate rows for the probe
+template <class Backend>
+MarkersHost host_markers(Context<Backend>& context) {
+    context.marker_xy.clear();
+    context.marker_ids.clear();
+    context.marker_statuses.clear();
+    for (const auto& marker : context.markers) {
+        context.marker_xy.insert(context.marker_xy.end(), {marker.center.x(), marker.center.y()});
+        context.marker_ids.push_back(marker.id);
+        context.marker_statuses.push_back(marker.status);
+    }
+    return {
+        static_cast<std::uint32_t>(context.markers.size()),
+        context.marker_xy,
+        context.marker_ids,
+        context.marker_statuses
     };
 }
 

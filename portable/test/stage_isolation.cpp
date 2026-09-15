@@ -11,6 +11,8 @@
 #include "kernels/plane.hpp"
 #include "support/reference_snapshot.hpp"
 
+#include <cctag/ICCTag.hpp>
+
 #include <boost/ut.hpp>
 
 #include <omp.h>
@@ -43,6 +45,96 @@ int main(int argc, const char** argv) {
     }
 
     const suite<"stage_isolation"> stage_isolation_suite = [] {
+        "public detection candidates and their clones retain the observed marker results"_test =
+            [] {
+            struct MarkerProbe : cctag::Probe {
+                std::vector<Eigen::Vector2f> centers;
+                std::vector<std::int32_t> ids;
+                std::vector<std::int32_t> statuses;
+                void markers(const cctag::MarkersView& view) override {
+                    for (std::uint32_t i = 0; i < view.candidate_count; ++i) {
+                        centers.emplace_back(
+                            view.positions_xy[2 * i],
+                            view.positions_xy[2 * i + 1]
+                        );
+                        ids.push_back(view.marker_ids[i]);
+                        statuses.push_back(view.identification_statuses[i]);
+                    }
+                }
+            };
+            for (const auto& file : snapshot_files_or_fail()) {
+                const ReferenceSnapshot snapshot = ReferenceSnapshot::read(file);
+                auto pixels = snapshot.tensor(Stage::pyramid, 0, "src").as<std::uint8_t>();
+                const cv::Mat1b image(
+                    snapshot.image_height(),
+                    snapshot.image_width(),
+                    pixels.data()
+                );
+                const cctag::Parameters params(snapshot.crowns());
+                boost::ptr_list<cctag::ICCTag> detections;
+                MarkerProbe probe;
+                cctag::cctagDetection(detections, 77, 0, image, params, nullptr, nullptr, &probe);
+                expect(!detections.empty()) << snapshot.problem() << fatal;
+                expect(eq(detections.size(), probe.ids.size())) << fatal;
+                boost::ptr_list<cctag::ICCTag> clones(detections);
+                // Reuse the pipe and clear its results while the API's clones stay alive
+                cctag::cctagDetection(
+                    detections,
+                    77,
+                    1,
+                    cv::Mat1b(32, 32, std::uint8_t{0}),
+                    params
+                );
+                expect(detections.empty());
+                std::size_t i = 0;
+                for (const auto& clone : clones) {
+                    expect(eq(clone.id(), probe.ids[i]));
+                    expect(eq(clone.getStatus(), probe.statuses[i]));
+                    expect(eq(clone.x(), probe.centers[i].x()));
+                    expect(eq(clone.y(), probe.centers[i].y()));
+                    expect(clone.rescaledOuterEllipse().a() > 0);
+                    expect(clone.rescaledOuterEllipse().b() > 0);
+                    ++i;
+                }
+            }
+        };
+        "markers are exact across thread counts and reused contexts"_test = [] {
+            const int threads = omp_get_max_threads();
+            Context<cpu::Backend> reused;
+            for (const auto& file : snapshot_files_or_fail()) {
+                const ReferenceSnapshot snapshot = ReferenceSnapshot::read(file);
+                const cctag::Parameters params(snapshot.crowns());
+                Context<cpu::Backend> fresh;
+                fill_context(snapshot, Stage::linking, fresh);
+                omp_set_num_threads(1);
+                cpu::Backend::candidates(fresh, params);
+                cpu::Backend::markers(fresh, params);
+                const MarkersHost expected = host_markers(fresh);
+                expect(std::ranges::find(expected.statuses, 1) != expected.statuses.end())
+                    << snapshot.problem() << "must exercise reliable identification";
+                for (const int count : {1, 3, threads}) {
+                    fill_context(snapshot, Stage::linking, reused);
+                    reused.candidate_markers = fresh.candidate_markers;
+                    omp_set_num_threads(count);
+                    cpu::Backend::markers(reused, params);
+                    const MarkersHost actual = host_markers(reused);
+                    expect(std::ranges::equal(expected.xy, actual.xy))
+                        << snapshot.problem() << "centers at" << count << "threads";
+                    expect(std::ranges::equal(expected.ids, actual.ids))
+                        << snapshot.problem() << "ids";
+                    expect(std::ranges::equal(expected.statuses, actual.statuses))
+                        << snapshot.problem() << "statuses";
+                    expect(eq(fresh.markers.size(), reused.markers.size())) << fatal;
+                    for (std::size_t i = 0; i < fresh.markers.size(); ++i) {
+                        expect(fresh.markers[i].homography == reused.markers[i].homography)
+                            << snapshot.problem() << "homography";
+                        expect(eq(fresh.markers[i].quality, reused.markers[i].quality))
+                            << snapshot.problem() << "quality";
+                    }
+                }
+            }
+            omp_set_num_threads(threads);
+        };
         "candidate markers are exact across thread counts and reused contexts"_test = [] {
             const int threads = omp_get_max_threads();
             Context<cpu::Backend> reused;

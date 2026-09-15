@@ -15,6 +15,7 @@ add_library(CCTag
     ${PROJECT_SOURCE_DIR}/src/cctag/geometry/Ellipse.cpp
     src/ICCTag.cpp
     src/host/ellipse.cpp
+    src/host/markers.cpp
     src/backends/cpu/buffers.cpp
     src/backends/cpu/pyramid.cpp
     src/backends/cpu/gradient.cpp
@@ -22,7 +23,8 @@ add_library(CCTag
     src/backends/cpu/edge_points.cpp
     src/backends/cpu/vote.cpp
     src/backends/cpu/linking.cpp
-    src/backends/cpu/candidates.cpp)
+    src/backends/cpu/candidates.cpp
+    src/backends/cpu/markers.cpp)
 
 find_package(OpenMP REQUIRED COMPONENTS CXX)
 set(THREADS_PREFER_PTHREAD_FLAG ON)
@@ -100,6 +102,7 @@ if(CCTAG_BUILD_TESTS)
       src/backends/cpu/edge_points.cpp
       src/backends/cpu/vote.cpp
       src/backends/cpu/linking.cpp
+      src/backends/cpu/markers.cpp
       test/main.cpp
       test/detection_api.cpp
       test/support/reference_snapshot.cpp)

@@ -164,6 +164,14 @@ void detect(
              candidates.quality.data()}
         );
     }
+    {
+        StageTiming<Backend> timing(context, probe, "markers");
+        Backend::markers(context, params);
+    }
+    if (probe) {
+        const MarkersHost markers = host_markers(context);
+        probe->markers({markers.n, markers.xy.data(), markers.ids.data(), markers.statuses.data()});
+    }
 }
 
 } // namespace cctag::portable
@@ -324,6 +332,24 @@ struct RecordingProbe : cctag::Probe {
         );
     }
 
+    void markers(const cctag::MarkersView& markers) override {
+        record(
+            "markers/xy",
+            {2, markers.candidate_count, 2 * sizeof(float), markers.positions_xy},
+            sizeof(float)
+        );
+        record(
+            "markers/id",
+            {1, markers.candidate_count, sizeof(std::int32_t), markers.marker_ids},
+            sizeof(std::int32_t)
+        );
+        record(
+            "markers/status",
+            {1, markers.candidate_count, sizeof(std::int32_t), markers.identification_statuses},
+            sizeof(std::int32_t)
+        );
+    }
+
     void leave(const char* stage) override {
         timing.push_back(std::string("leave ") + stage);
     }
@@ -406,14 +432,17 @@ inline suite<"host_sequence"> host_sequence_suite = [] {
         expect(probe.tensors.at("pyramid/level0/src") == image);
     };
 
-    "probe observes per level stages and whole image candidate markers"_test = [] {
+    "probe observes per level stages and whole image candidates and markers"_test = [] {
         const std::uint32_t w = 37, h = 23;
         Context<cpu::Backend> context;
         const RecordingProbe probe = run(context, test_image(w, h), w, h);
-        // Seventeen tensors at each of four levels, then three whole-image candidate tensors
-        expect(eq(probe.tensors.size(), 71u));
+        // Seventeen tensors at each level, then three each for candidates and markers
+        expect(eq(probe.tensors.size(), 74u));
         for (const auto* name : {"ellipse", "level", "quality"}) {
             expect(eq(probe.tensors.count(std::string("candidates/") + name), 1u)) << name;
+        }
+        for (const auto* name : {"xy", "id", "status"}) {
+            expect(eq(probe.tensors.count(std::string("markers/") + name), 1u)) << name;
         }
         for (std::uint32_t level = 0; level < context.levels.size(); ++level) {
             expect(eq(probe.tensors.count("pyramid/level" + std::to_string(level) + "/src"), 1u))
@@ -454,7 +483,7 @@ inline suite<"host_sequence"> host_sequence_suite = [] {
         }
     };
 
-    "probe receives timing events in stage order through candidates"_test = [] {
+    "probe receives timing events in stage order through markers"_test = [] {
         const std::uint32_t w = 37, h = 23;
         Context<cpu::Backend> context;
         const RecordingProbe probe = run(context, test_image(w, h), w, h);
@@ -472,7 +501,9 @@ inline suite<"host_sequence"> host_sequence_suite = [] {
             "enter linking",
             "leave linking",
             "enter candidates",
-            "leave candidates"
+            "leave candidates",
+            "enter markers",
+            "leave markers"
         };
         expect(probe.timing == expected);
     };

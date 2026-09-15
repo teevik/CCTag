@@ -11,6 +11,8 @@
 #include <cctag/ICCTag.hpp>
 #include <cctag/Probe.hpp>
 
+#include <boost/archive/xml_iarchive.hpp>
+
 #if defined(CCTAG_PORTABLE_BACKEND_CPU)
 #include "backends/cpu/backend.hpp"
 namespace cctag::portable {
@@ -20,6 +22,7 @@ using SelectedBackend = cpu::Backend;
 #error "CCTAG_PORTABLE_BACKEND_<NAME> must be defined for exactly one execution backend"
 #endif
 
+#include <fstream>
 #include <map>
 #include <memory>
 #include <mutex>
@@ -30,6 +33,45 @@ namespace cctag {
 namespace {
 
 using SelectedContext = portable::Context<portable::SelectedBackend>;
+
+/// Owns the public API's copy of a portable detection candidate
+class DetectionCandidate final : public ICCTag {
+  public:
+    explicit DetectionCandidate(const portable::Marker& marker) :
+        ellipse(
+            Point2d<Eigen::Vector3f>(marker.outer_ellipse.cx, marker.outer_ellipse.cy),
+            marker.outer_ellipse.a,
+            marker.outer_ellipse.b,
+            marker.outer_ellipse.angle
+        ) {
+        _x = marker.center.x();
+        _y = marker.center.y();
+        _id = marker.id;
+        _status = marker.status;
+    }
+
+    float x() const override {
+        return _x;
+    }
+    float y() const override {
+        return _y;
+    }
+    MarkerID id() const override {
+        return _id;
+    }
+    int getStatus() const override {
+        return _status;
+    }
+    const numerical::geometry::Ellipse& rescaledOuterEllipse() const override {
+        return ellipse;
+    }
+    ICCTag* clone() const override {
+        return new DetectionCandidate(*this);
+    }
+
+  private:
+    numerical::geometry::Ellipse ellipse;
+};
 
 std::mutex registry_mutex;
 std::map<int, std::unique_ptr<SelectedContext>> registry;
@@ -56,17 +98,23 @@ void cctagDetection(
     const std::string& parameterFile,
     const std::string& cctagBankFilename
 ) {
-    // TODO(markers stage): Load `parameterFile` through Params.cpp and
-    // `cctagBankFilename` through CCTagMarkersBank
-    // Reject file arguments until loading is supported
-    if (!parameterFile.empty() || !cctagBankFilename.empty()) {
-        throw std::logic_error(
-            "cctagDetection: parameter and bank files are not supported by the portable pipeline "
-            "yet"
-        );
+    Parameters params(nRings);
+    if (!parameterFile.empty()) {
+        std::ifstream input(parameterFile);
+        if (!input) {
+            throw std::invalid_argument(
+                "cctagDetection: cannot open parameter file " + parameterFile
+            );
+        }
+        boost::archive::xml_iarchive archive(input);
+        archive >> boost::serialization::make_nvp("CCTagsParams", params);
     }
-    const Parameters params(nRings);
-    cctagDetection(markers, pipeId, frame, graySrc, params, durations, nullptr, nullptr);
+    if (cctagBankFilename.empty()) {
+        cctagDetection(markers, pipeId, frame, graySrc, params, durations, nullptr, nullptr);
+    } else {
+        const CCTagMarkersBank bank(cctagBankFilename);
+        cctagDetection(markers, pipeId, frame, graySrc, params, durations, &bank, nullptr);
+    }
 }
 
 void cctagDetection(
@@ -81,7 +129,6 @@ void cctagDetection(
 ) {
     (void)frame;
     (void)durations;
-    (void)pBank;
     markers.clear();
 
     if (graySrc.empty()) {
@@ -100,7 +147,16 @@ void cctagDetection(
     };
 
     const Parameters& effective_params = Parameters::OverrideLoaded ? Parameters::Override : params;
-    portable::detect(context_for(pipeId), input, effective_params, probe);
+    auto& context = context_for(pipeId);
+    if (pBank) {
+        context.bank.set(*pBank);
+    } else {
+        context.bank.custom = false;
+    }
+    portable::detect(context, input, effective_params, probe);
+    for (const auto& marker : context.markers) {
+        markers.push_back(new DetectionCandidate(marker));
+    }
 }
 
 } // namespace cctag

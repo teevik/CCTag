@@ -69,6 +69,14 @@ struct CandidatesHost {
     std::span<const float> quality;
 };
 
+/// Read-only host view of the final detection candidates
+struct MarkersHost {
+    std::uint32_t n;
+    std::span<const float> xy;
+    std::span<const std::int32_t> ids;
+    std::span<const std::int32_t> statuses;
+};
+
 /// Converts a plane to the probe's format, with the row stride in bytes
 template <class T>
 inline cctag::Plane probe_plane(kernels::Plane<const T> plane) {
