@@ -36,6 +36,18 @@ std::vector<std::filesystem::path> snapshot_files_or_fail() {
     return files;
 }
 
+void expect_same_candidate_marker(const CandidateMarker& actual, const CandidateMarker& expected) {
+    const auto same_point = [](const DirectedPoint& a, const DirectedPoint& b) {
+        return a.x == b.x && a.y == b.y && a.dx == b.dx && a.dy == b.dy;
+    };
+    expect(actual.center == expected.center) << "center";
+    expect(actual.rescaled_outer_ellipse.conic == expected.rescaled_outer_ellipse.conic)
+        << "outer ellipse";
+    expect(eq(actual.quality, expected.quality)) << "quality";
+    expect(std::ranges::equal(actual.outer_points, expected.outer_points, same_point))
+        << "directed outer points";
+}
+
 } // namespace
 
 int main(int argc, const char** argv) {
@@ -183,68 +195,74 @@ int main(int argc, const char** argv) {
             }
             omp_set_num_threads(threads);
         };
-        "candidate storage survives fewer and zero results without exposing stale markers"_test =
-            [] {
+        "candidate views and detection candidates exclude inactive candidate markers"_test = [] {
             for (const auto& file : snapshot_files_or_fail()) {
                 const ReferenceSnapshot snapshot = ReferenceSnapshot::read(file);
-                const cctag::Parameters params(snapshot.crowns());
+                cctag::Parameters full_params(snapshot.crowns());
+                // Unidentified candidate markers are not deduplicated, so each active one
+                // must produce exactly one detection candidate.
+                full_params._doIdentification = false;
                 Context<cpu::Backend> context;
                 fill_context(snapshot, Stage::linking, context);
-                cpu::Backend::candidates(context, params);
-                const auto initial = context.candidate_markers.view();
-                const std::vector<CandidateMarker> expected(initial.begin(), initial.end());
-                expect(!expected.empty()) << snapshot.problem() << fatal;
 
-                // Reserve beyond the current point count so losing and rebuilding a marker
-                // cannot accidentally satisfy the storage-reuse check via allocator reuse.
-                std::vector<std::size_t> capacities;
-                for (auto& marker : context.candidate_markers.view()) {
-                    marker.outer_points.reserve(marker.outer_points.size() + 16);
-                    capacities.push_back(marker.outer_points.capacity());
-                }
-                for (const std::size_t limit : {1u, 0u}) {
-                    cctag::Parameters fewer = params;
-                    fewer._maximumNbCandidatesLoopTwo = limit;
-                    cpu::Backend::candidates(context, fewer);
+                for (const std::size_t max_candidates_per_level : {1u, 0u}) {
+                    cpu::Backend::candidates(context, full_params);
+                    expect(!context.candidate_markers.view().empty())
+                        << snapshot.problem() << fatal;
+
+                    cctag::Parameters limited_params = full_params;
+                    limited_params._maximumNbCandidatesLoopTwo = max_candidates_per_level;
+                    cpu::Backend::candidates(context, limited_params);
                     const auto active_count = context.candidate_markers.view().size();
-                    expect(active_count <= context.levels.size() * limit) << snapshot.problem();
-                    if (limit == 0) {
-                        expect(eq(active_count, 0u));
-                    }
+                    expect(le(active_count, context.levels.size() * max_candidates_per_level))
+                        << snapshot.problem();
+
                     const CandidatesHost view = host_candidates(context);
                     expect(eq(view.n, active_count));
                     expect(eq(view.ellipses.size(), 5 * active_count));
                     expect(eq(view.levels.size(), active_count));
                     expect(eq(view.quality.size(), active_count));
 
-                    fewer._doIdentification = false;
-                    cpu::Backend::markers(context, fewer);
-                    // Unidentified candidates survive deduplication, so every active input
-                    // must appear exactly once and retained inactive storage must stay hidden.
+                    cpu::Backend::markers(context, limited_params);
                     expect(eq(context.markers.size(), active_count));
+                }
+            }
+        };
+        "candidate markers retain data and storage after fewer or zero results"_test = [] {
+            for (const auto& file : snapshot_files_or_fail()) {
+                const ReferenceSnapshot snapshot = ReferenceSnapshot::read(file);
+                const cctag::Parameters full_params(snapshot.crowns());
+                Context<cpu::Backend> context;
+                fill_context(snapshot, Stage::linking, context);
+                cpu::Backend::candidates(context, full_params);
+                const auto initial = context.candidate_markers.view();
+                const std::vector<CandidateMarker> original_candidates(
+                    initial.begin(),
+                    initial.end()
+                );
+                expect(!original_candidates.empty()) << snapshot.problem() << fatal;
 
-                    cpu::Backend::candidates(context, params);
+                // Extra capacity distinguishes retained storage from a rebuilt vector
+                // that happens to receive the same allocation address.
+                std::vector<std::size_t> outer_point_capacities;
+                for (auto& marker : context.candidate_markers.view()) {
+                    marker.outer_points.reserve(marker.outer_points.size() + 16);
+                    outer_point_capacities.push_back(marker.outer_points.capacity());
+                }
+
+                for (const std::size_t max_candidates_per_level : {1u, 0u}) {
+                    // Full results -> fewer (or zero) results -> full results again.
+                    cctag::Parameters limited_params = full_params;
+                    limited_params._maximumNbCandidatesLoopTwo = max_candidates_per_level;
+                    cpu::Backend::candidates(context, limited_params);
+                    cpu::Backend::candidates(context, full_params);
+
                     const auto restored = context.candidate_markers.view();
-                    expect(eq(restored.size(), expected.size())) << fatal;
-                    for (std::size_t i = 0; i < expected.size(); ++i) {
-                        const auto& actual = restored[i];
-                        expect(actual.outer_points.capacity() >= capacities[i])
+                    expect(eq(restored.size(), original_candidates.size())) << fatal;
+                    for (std::size_t i = 0; i < restored.size(); ++i) {
+                        expect(restored[i].outer_points.capacity() >= outer_point_capacities[i])
                             << snapshot.problem() << "outer point storage at candidate" << i;
-                        expect(actual.center == expected[i].center);
-                        expect(
-                            actual.rescaled_outer_ellipse.conic
-                            == expected[i].rescaled_outer_ellipse.conic
-                        );
-                        expect(eq(actual.quality, expected[i].quality));
-                        expect(
-                            std::ranges::equal(
-                                actual.outer_points,
-                                expected[i].outer_points,
-                                [](const auto& a, const auto& b) {
-                            return a.x == b.x && a.y == b.y && a.dx == b.dx && a.dy == b.dy;
-                        }
-                            )
-                        );
+                        expect_same_candidate_marker(restored[i], original_candidates[i]);
                     }
                 }
             }

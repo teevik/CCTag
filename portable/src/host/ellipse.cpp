@@ -17,6 +17,17 @@
 
 namespace cctag::portable {
 
+namespace {
+
+/// Rotates and translates local coordinates with the legacy's double trigonometry
+Eigen::Vector2f ellipse_to_image(const Ellipse& ellipse, float x, float y) {
+    const double cosine = std::cos(static_cast<double>(ellipse.angle));
+    const double sine = std::sin(static_cast<double>(ellipse.angle));
+    return {x * cosine - y * sine + ellipse.cx, x * sine + y * cosine + ellipse.cy};
+}
+
+} // namespace
+
 bool Ellipse::set_parameters(float x, float y, float semi_a, float semi_b, float rotation) {
     if (!(semi_a > 0 && semi_b > 0) || !std::isfinite(x) || !std::isfinite(y)
         || !std::isfinite(semi_a) || !std::isfinite(semi_b) || !std::isfinite(rotation)) {
@@ -216,6 +227,21 @@ bool ellipse_through_five(const std::array<Eigen::Vector2f, 5>& points, Ellipse&
     return ellipse.set_conic(conic);
 }
 
+Eigen::Vector2f point_on_ellipse(const Ellipse& ellipse, float x, float y) {
+    x -= ellipse.cx;
+    y -= ellipse.cy;
+    // Keep the legacy's double trigonometry and float intermediate coordinates.
+    const double cosine = std::cos(static_cast<double>(ellipse.angle));
+    const double sine = std::sin(static_cast<double>(ellipse.angle));
+    float u = x * cosine + y * sine;
+    float v = -x * sine + y * cosine;
+    const float scale =
+        std::sqrt(u * u / (ellipse.a * ellipse.a) + v * v / (ellipse.b * ellipse.b));
+    u /= scale;
+    v /= scale;
+    return ellipse_to_image(ellipse, u, v);
+}
+
 float distance_to_ellipse(const Ellipse& ellipse, float x, float y) {
     const auto& q = ellipse.conic;
     const float u = x * q(0, 0) + y * q(0, 1) + q(0, 2);
@@ -265,11 +291,8 @@ int ellipse_perimeter(const Ellipse& ellipse) {
         // The legacy uses double trigonometry here, then rounds the float coordinates
         const float x = ellipse.a * std::cos(static_cast<double>(theta));
         const float y = ellipse.b * std::sin(static_cast<double>(theta));
-        const float px = x * std::cos(static_cast<double>(ellipse.angle))
-            - y * std::sin(static_cast<double>(ellipse.angle)) + ellipse.cx;
-        const float py = x * std::sin(static_cast<double>(ellipse.angle))
-            + y * std::cos(static_cast<double>(ellipse.angle)) + ellipse.cy;
-        return {std::round(px), std::round(py)};
+        const auto image = ellipse_to_image(ellipse, x, y);
+        return {std::round(image.x()), std::round(image.y())};
     };
     const Eigen::Vector2f p11 = point(t1), p12 = point(t1 + std::numbers::pi_v<float>);
     const Eigen::Vector2f p22 = point(t2 + std::numbers::pi_v<float>);

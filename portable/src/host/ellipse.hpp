@@ -60,6 +60,8 @@ bool fit_circle(
 /// Conic through five points, with the constant coefficient fixed to one
 bool ellipse_through_five(const std::array<Eigen::Vector2f, 5>& points, Ellipse& ellipse);
 
+/// Projects a point radially from the center onto the ellipse
+Eigen::Vector2f point_on_ellipse(const Ellipse& ellipse, float x, float y);
 float distance_to_ellipse(const Ellipse& ellipse, float x, float y);
 bool in_ellipse(const Ellipse& ellipse, float x, float y);
 bool in_hull(const Ellipse& inner, const Ellipse& outer, float x, float y);

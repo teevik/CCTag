@@ -91,6 +91,39 @@ struct CandidateSlot {
     /// Outer-ring points accumulated while validating and assembling flow components
     std::vector<DirectedPoint> flow_outer_points;
     CandidateMarker marker;
+
+    /// Starts the candidate's result state and random stream without releasing scratch storage
+    void reset(int level, std::int32_t seed_index, std::size_t point_count) {
+        // Touched indices refer to the previous frame's plane, so clear before resizing it.
+        clear_marks();
+        processed.resize(point_count, 0);
+        seed = seed_index;
+        accepted = false;
+        has_marker = false;
+        label = -1;
+        filtered_children.clear();
+        outer_points.clear();
+        kernels::pcg32_seed(
+            random,
+            271828,
+            (std::uint64_t{static_cast<std::uint32_t>(level)} << 32)
+                | static_cast<std::uint32_t>(seed)
+        );
+    }
+
+    void clear_marks() {
+        for (const auto index : touched) {
+            processed[index] = 0;
+        }
+        touched.clear();
+    }
+
+    void mark(std::int32_t index) {
+        if (!processed[index]) {
+            processed[index] = 1;
+            touched.push_back(index);
+        }
+    }
 };
 
 /// Per-level candidate slots and segment labels retained across frames

@@ -32,20 +32,6 @@ DirectedPoint directed_point(EdgePointsHost points, std::int32_t index) {
     return {point.x(), point.y(), direction.x(), direction.y()};
 }
 
-void clear_marks(CandidateSlot& slot) {
-    for (const auto index : slot.touched) {
-        slot.processed[index] = 0;
-    }
-    slot.touched.clear();
-}
-
-void mark(CandidateSlot& slot, std::int32_t index) {
-    if (!slot.processed[index]) {
-        slot.processed[index] = 1;
-        slot.touched.push_back(index);
-    }
-}
-
 void copy_fit_points(
     EdgePointsHost points,
     std::span<const std::int32_t> indices,
@@ -184,7 +170,7 @@ bool grow_hull(const Buffers& level, EdgePointsHost points, CandidateSlot& slot,
     for (std::size_t i = 0; i < initial_size; ++i) {
         slot.stack.clear();
         slot.stack.push_back({slot.outer_points[i], 0});
-        mark(slot, slot.outer_points[i]);
+        slot.mark(slot.outer_points[i]);
         while (!slot.stack.empty()) {
             auto& visit = slot.stack.back();
             if (visit.neighbour == 8) {
@@ -205,7 +191,7 @@ bool grow_hull(const Buffers& level, EdgePointsHost points, CandidateSlot& slot,
             }
             if (gradient(points, index).dot(Eigen::Vector2f(inner.cx - x, inner.cy - y)) < 0) {
                 slot.outer_points.push_back(index);
-                mark(slot, index);
+                slot.mark(index);
                 slot.stack.push_back({index, 0});
             }
         }
@@ -221,10 +207,10 @@ bool grow_ellipse(const Buffers& level, EdgePointsHost points, CandidateSlot& sl
                     : fit_circle(slot.fit_points, slot.fit, slot.ellipse))) {
         return false;
     }
-    clear_marks(slot);
+    slot.clear_marks();
     slot.outer_points = slot.filtered_children;
     for (const auto index : slot.outer_points) {
-        mark(slot, index);
+        slot.mark(index);
     }
     if (!good_init) {
         std::size_t previous = 0;
@@ -265,9 +251,9 @@ bool grow_ellipse(const Buffers& level, EdgePointsHost points, CandidateSlot& sl
         }
         slot.outer_points = slot.best_points;
         slot.ellipse = best;
-        clear_marks(slot);
+        slot.clear_marks();
         for (const auto index : slot.outer_points) {
-            mark(slot, index);
+            slot.mark(index);
         }
     }
     copy_fit_points(points, slot.outer_points, slot);
@@ -331,7 +317,7 @@ bool add_flow(
     std::size_t circles,
     CandidateSlot& slot
 ) {
-    clear_marks(slot);
+    slot.clear_marks();
     for (const auto index : outer_points) {
         slot.flow_outer_points.push_back(directed_point(points, index));
     }
@@ -350,7 +336,7 @@ bool add_flow(
                 break;
             }
             if (!slot.processed[index]) {
-                mark(slot, index);
+                slot.mark(index);
                 const auto point = position(points, index);
                 const auto toward_center =
                     Eigen::Vector2f(ellipse.cx - point.x(), ellipse.cy - point.y())
@@ -375,7 +361,7 @@ bool add_flow(
             break;
         }
     }
-    clear_marks(slot);
+    slot.clear_marks();
     if (!valid || static_cast<float>(gradient_out) / static_cast<float>(added) > 0.5f) {
         slot.flow_outer_points.clear();
         return false;
@@ -675,21 +661,7 @@ void Backend::candidates(Context<Backend>& context, const Parameters& params) {
         const VoteHost vote = host_vote(level);
         const std::span<CandidateSlot> slots(candidates.slots.data(), count);
         for (std::size_t i = 0; i < count; ++i) {
-            auto& slot = slots[i];
-            clear_marks(slot);
-            slot.processed.resize(level.n, 0);
-            slot.seed = level.link_seeds[level.loop_one_order[i]];
-            slot.accepted = false;
-            slot.has_marker = false;
-            slot.label = -1;
-            slot.filtered_children.clear();
-            slot.outer_points.clear();
-            kernels::pcg32_seed(
-                slot.random,
-                271828,
-                (std::uint64_t{static_cast<std::uint32_t>(index)} << 32)
-                    | static_cast<std::uint32_t>(slot.seed)
-            );
+            slots[i].reset(index, level.link_seeds[level.loop_one_order[i]], level.n);
         }
 
 #pragma omp parallel for schedule(dynamic, 1)

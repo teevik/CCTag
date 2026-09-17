@@ -74,22 +74,6 @@ Eigen::Vector2f project(const Eigen::Matrix3f& matrix, float x, float y) {
     };
 }
 
-/// Projects the outer point radially onto the fitted ellipse
-Eigen::Vector2f point_on_ellipse(const Ellipse& ellipse, const DirectedPoint& point) {
-    const float x = point.x - ellipse.cx, y = point.y - ellipse.cy;
-    // Keep the legacy's double trigonometry and float intermediate coordinates
-    float u = x * std::cos(double(ellipse.angle)) + y * std::sin(double(ellipse.angle));
-    float v = -x * std::sin(double(ellipse.angle)) + y * std::cos(double(ellipse.angle));
-    const float scale =
-        std::sqrt(u * u / (ellipse.a * ellipse.a) + v * v / (ellipse.b * ellipse.b));
-    u /= scale;
-    v /= scale;
-    return {
-        u * std::cos(double(ellipse.angle)) - v * std::sin(double(ellipse.angle)) + ellipse.cx,
-        u * std::sin(double(ellipse.angle)) + v * std::cos(double(ellipse.angle)) + ellipse.cy
-    };
-}
-
 bool refine_outer_point(Cut& cut, Image image, float scale, std::span<float> signal) {
     const float length = 3.f * std::sqrt(2.f) * scale;
     const Eigen::Vector2f direction = Eigen::Vector2f(cut.stop.dx, cut.stop.dy).normalized();
@@ -183,7 +167,7 @@ int select_cuts(
     scratch.refinement.resize(params._numSamplesOuterEdgePointsRefinement);
     for (std::size_t i = 0; i < collected; ++i) {
         auto& cut = scratch.cuts[i];
-        const auto point = point_on_ellipse(ellipse, cut.stop);
+        const auto point = point_on_ellipse(ellipse, cut.stop.x, cut.stop.y);
         cut.stop.x = point.x();
         cut.stop.y = point.y();
         if (refine_outer_point(cut, image, candidate.scale, scratch.refinement)
