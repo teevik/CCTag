@@ -113,6 +113,11 @@ struct Buffers {
     kernels::Plane<std::uint8_t> edges_plane() {
         return {edges[0], width, height, edges.step1()};
     }
+
+    /// Borrow just these stage outputs for host computation or stage-isolation checks
+    EdgePointsHost edge_points_view() const;
+    VoteHost vote_view() const;
+    LinkingHost linking_view() const;
 };
 
 /// The CPU execution backend, implementing ExecutionBackend
@@ -137,12 +142,8 @@ struct Backend {
     static void candidates(Context<Backend>& context, const Parameters& params);
     static void markers(Context<Backend>& context, const Parameters& params);
 
-    static PyramidHost host_pyramid(Buffers& level);
-    static GradientHost host_gradient(Buffers& level);
-    static EdgesHost host_edges(Buffers& level);
-    static EdgePointsHost host_edge_points(Buffers& level);
-    static VoteHost host_vote(Buffers& level);
-    static LinkingHost host_linking(Buffers& level);
+    /// Borrows all per-level stage outputs for observation after linking
+    static SnapshotViews snapshot_views(Buffers& level);
 
     static void wait(Context<Backend>&) {}
 };

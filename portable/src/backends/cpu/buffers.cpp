@@ -62,4 +62,34 @@ void Buffers::ensure(
     voter_cursors.reserve(max_points);
 }
 
+EdgePointsHost Buffers::edge_points_view() const {
+    return {n, xy, gradients};
+}
+
+VoteHost Buffers::vote_view() const {
+    return {links, voters_offsets, voters_values, is_max, flow_length, seeds, seed_order};
+}
+
+LinkingHost Buffers::linking_view() const {
+    return {
+        static_cast<std::uint32_t>(link_seeds.size()),
+        link_seeds,
+        segment_offsets,
+        segment_values,
+        child_counts,
+        avg_vote
+    };
+}
+
+SnapshotViews Backend::snapshot_views(Buffers& level) {
+    return {
+        {level.src_plane().as_const()},
+        {level.dx_plane().as_const(), level.dy_plane().as_const()},
+        {level.edges_plane().as_const()},
+        level.edge_points_view(),
+        level.vote_view(),
+        level.linking_view()
+    };
+}
+
 } // namespace cctag::portable::cpu

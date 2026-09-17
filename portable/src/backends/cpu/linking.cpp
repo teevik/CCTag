@@ -179,17 +179,6 @@ void Backend::linking(Buffers& level, const Parameters& params) {
     });
 }
 
-LinkingHost Backend::host_linking(Buffers& level) {
-    return LinkingHost{
-        static_cast<std::uint32_t>(level.link_seeds.size()),
-        level.link_seeds,
-        level.segment_offsets,
-        level.segment_values,
-        level.child_counts,
-        level.avg_vote
-    };
-}
-
 } // namespace cctag::portable::cpu
 
 #ifdef CCTAG_TEST
@@ -218,7 +207,7 @@ inline suite<"linking_stage"> linking_stage_suite = [] {
         level.seed_order = {3, 0, 2, 1, 4};
         const cctag::Parameters params(3);
         cpu::Backend::linking(level, params);
-        const LinkingHost linking = cpu::Backend::host_linking(level);
+        const LinkingHost linking = level.linking_view();
         expect(std::ranges::equal(linking.seeds, std::array{0, 1, 2, 3, 4}));
         expect(std::ranges::equal(linking.segment_values, std::array{0, 1, 2, 3, 4}));
         expect(std::ranges::equal(linking.avg_vote, std::array{4.f, 1.f, 4.f, 9.f, 1.f}));
@@ -229,7 +218,7 @@ inline suite<"linking_stage"> linking_stage_suite = [] {
         // A reused level must expose empty CSRs after a frame with no seeds
         level.seed_order.clear();
         cpu::Backend::linking(level, params);
-        const LinkingHost empty = cpu::Backend::host_linking(level);
+        const LinkingHost empty = level.linking_view();
         expect(eq(empty.c, 0u));
         expect(empty.seeds.empty());
         expect(std::ranges::equal(empty.segment_offsets, std::array{0}));
@@ -256,7 +245,7 @@ inline suite<"linking_stage"> linking_stage_suite = [] {
         level.seed_order = {150, 230, 240};
         cctag::Parameters params(3);
         cpu::Backend::linking(level, params);
-        const LinkingHost linking = cpu::Backend::host_linking(level);
+        const LinkingHost linking = level.linking_view();
         // The first walk is [50, 250], with [231, 250] left unmarked
         expect(std::ranges::equal(linking.seeds, std::array{150, 240}));
         expect(std::ranges::equal(linking.segment_offsets, std::array{0, 201, 362}));
@@ -270,7 +259,7 @@ inline suite<"linking_stage"> linking_stage_suite = [] {
         // Windows beyond a direction's length use the partial-window convexity test
         params._windowSizeOnInnerEllipticSegment = 101;
         cpu::Backend::linking(level, params);
-        expect(std::ranges::equal(cpu::Backend::host_linking(level).seeds, std::array{150, 230}));
+        expect(std::ranges::equal(level.linking_view().seeds, std::array{150, 230}));
         params._windowSizeOnInnerEllipticSegment = 0;
         expect(throws<std::invalid_argument>([&] { cpu::Backend::linking(level, params); }));
     };
@@ -291,7 +280,7 @@ inline suite<"linking_stage"> linking_stage_suite = [] {
         level.seed_order = {0, 2, 1};
         cctag::Parameters params(3);
         cpu::Backend::linking(level, params);
-        const LinkingHost linking = cpu::Backend::host_linking(level);
+        const LinkingHost linking = level.linking_view();
         expect(std::ranges::equal(linking.seeds, std::array{0}));
         expect(std::ranges::equal(linking.child_counts, std::array{30}));
         expect(std::ranges::equal(linking.avg_vote, std::array{961.f / 3.f}));
@@ -305,13 +294,8 @@ inline suite<"linking_stage"> linking_stage_suite = [] {
         // A vote threshold stops growth without claiming the other seeds
         params._averageVoteMin = 29.f;
         cpu::Backend::linking(level, params);
-        expect(std::ranges::equal(cpu::Backend::host_linking(level).seeds, std::array{0, 1, 2}));
-        expect(
-            std::ranges::equal(
-                cpu::Backend::host_linking(level).segment_values,
-                std::array{0, 1, 2}
-            )
-        );
+        expect(std::ranges::equal(level.linking_view().seeds, std::array{0, 1, 2}));
+        expect(std::ranges::equal(level.linking_view().segment_values, std::array{0, 1, 2}));
     };
 };
 

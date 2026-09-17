@@ -121,18 +121,6 @@ void Backend::vote(Buffers& level, const Parameters& params) {
     });
 }
 
-VoteHost Backend::host_vote(Buffers& level) {
-    return VoteHost{
-        level.links,
-        level.voters_offsets,
-        level.voters_values,
-        level.is_max,
-        level.flow_length,
-        level.seeds,
-        level.seed_order
-    };
-}
-
 } // namespace cctag::portable::cpu
 
 #ifdef CCTAG_TEST
@@ -165,7 +153,7 @@ inline suite<"vote_stage"> vote_stage_suite = [] {
         params._minVotesToSelectCandidate = 1;
         params._ratioVoting = 3.f;
         cpu::Backend::vote(level, params);
-        const VoteHost vote = cpu::Backend::host_vote(level);
+        const VoteHost vote = level.vote_view();
         expect(
             std::ranges::equal(vote.links, std::array{1, -1, 0, 2, 3, 1, 2, 4, 5, 3, 4, -1, 1, -1})
         );
@@ -183,19 +171,19 @@ inline suite<"vote_stage"> vote_stage_suite = [] {
 
         params._minVotesToSelectCandidate = 2;
         cpu::Backend::vote(level, params);
-        expect(std::ranges::equal(cpu::Backend::host_vote(level).seeds, std::array{5}));
+        expect(std::ranges::equal(level.vote_view().seeds, std::array{5}));
 
         // The longer sub-segment fails the ratio check, leaving a tie between the two seeds
         params._minVotesToSelectCandidate = 0;
         params._ratioVoting = 2.f;
         cpu::Backend::vote(level, params);
-        expect(std::ranges::equal(cpu::Backend::host_vote(level).seed_order, std::array{0, 5}));
-        expect(std::ranges::equal(cpu::Backend::host_vote(level).voters_values, std::array{5, 0}));
+        expect(std::ranges::equal(level.vote_view().seed_order, std::array{0, 5}));
+        expect(std::ranges::equal(level.vote_view().voters_values, std::array{5, 0}));
 
         level.edges.setTo(0);
         cpu::Backend::edge_points(level);
         cpu::Backend::vote(level, params);
-        const VoteHost empty = cpu::Backend::host_vote(level);
+        const VoteHost empty = level.vote_view();
         expect(empty.links.empty());
         expect(std::ranges::equal(empty.voters_offsets, std::array{0}));
         expect(empty.voters_values.empty());
@@ -224,7 +212,7 @@ inline suite<"vote_stage"> vote_stage_suite = [] {
         cctag::Parameters params(4);
         params._minVotesToSelectCandidate = 1;
         cpu::Backend::vote(level, params);
-        const VoteHost vote = cpu::Backend::host_vote(level);
+        const VoteHost vote = level.vote_view();
         // Only the two extremities cross all seven sub-segments; inner walks stop early
         expect(std::ranges::equal(vote.seeds, std::array{0, 7}));
         expect(std::ranges::equal(vote.voters_values, std::array{7, 0}));
@@ -252,13 +240,13 @@ inline suite<"vote_stage"> vote_stage_suite = [] {
             cpu::Backend::edge_points(level);
             const cctag::Parameters params(3);
             cpu::Backend::vote(level, params);
-            expect(eq(cpu::Backend::host_vote(level).links[1], -1));
+            expect(eq(level.vote_view().links[1], -1));
 
             // The third step passes the border, then looks back to the corner edge
             level.input_width = 2 * level.width;
             level.input_height = 2 * level.height;
             cpu::Backend::vote(level, params);
-            expect(eq(cpu::Backend::host_vote(level).links[1], 1));
+            expect(eq(level.vote_view().links[1], 1));
         }
     };
 };

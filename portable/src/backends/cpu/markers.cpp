@@ -533,7 +533,7 @@ void Backend::markers(Context<Backend>& context, const Parameters& params) {
     if (context.identification.size() < count) {
         context.identification.resize(count);
     }
-    const Image image = host_pyramid(context.levels[0]).src;
+    const Image image = context.levels[0].src_plane().as_const();
 #pragma omp parallel for schedule(dynamic, 1)
     for (int i = 0; i < static_cast<int>(count); ++i) {
         identify(

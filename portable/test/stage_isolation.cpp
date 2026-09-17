@@ -371,7 +371,7 @@ int main(int argc, const char** argv) {
                 auto& levels = context.levels;
                 for (std::uint32_t level = 0; level < levels.size(); ++level) {
                     cpu::Backend::edge_points(levels[level]);
-                    const EdgePointsHost points = cpu::Backend::host_edge_points(levels[level]);
+                    const EdgePointsHost points = levels[level].edge_points_view();
                     const Tensor& xy = snapshot.tensor(Stage::edge_points, level, "xy");
                     const Tensor& gradients =
                         snapshot.tensor(Stage::edge_points, level, "gradients");
@@ -393,7 +393,7 @@ int main(int argc, const char** argv) {
                 const cctag::Parameters params(snapshot.crowns());
                 for (std::uint32_t level = 0; level < context.levels.size(); ++level) {
                     cpu::Backend::linking(context.levels[level], params);
-                    const LinkingHost linking = cpu::Backend::host_linking(context.levels[level]);
+                    const LinkingHost linking = context.levels[level].linking_view();
                     const auto compare = [&](const char* name, auto values) {
                         const Tensor& expected = snapshot.tensor(Stage::linking, level, name);
                         const Mismatch mismatch = compare_values(expected, values);
@@ -416,7 +416,7 @@ int main(int argc, const char** argv) {
                 const cctag::Parameters params(snapshot.crowns());
                 for (std::uint32_t level = 0; level < context.levels.size(); ++level) {
                     cpu::Backend::vote(context.levels[level], params);
-                    const VoteHost vote = cpu::Backend::host_vote(context.levels[level]);
+                    const VoteHost vote = context.levels[level].vote_view();
                     const auto compare = [&](const char* name, auto values) {
                         const Tensor& expected = snapshot.tensor(Stage::vote, level, name);
                         const Mismatch mismatch = compare_values(expected, values);

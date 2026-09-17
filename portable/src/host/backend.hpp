@@ -52,18 +52,9 @@ concept ExecutionBackend = requires(
     { B::candidates(context, params) };
     // Identifies candidate markers, deduplicates them and stably sorts them by id
     { B::markers(context, params) };
-    // Returns a read-only host view of `src`, produced by `load` or `pyramid`
-    { B::host_pyramid(level) } -> std::same_as<PyramidHost>;
-    // Returns read-only host views of `dx` and `dy`, produced by `gradient`
-    { B::host_gradient(level) } -> std::same_as<GradientHost>;
-    // Returns a read-only host view of the thinned edges
-    { B::host_edges(level) } -> std::same_as<EdgesHost>;
-    // Returns a read-only host view of the edge-point collection in canonical order
-    { B::host_edge_points(level) } -> std::same_as<EdgePointsHost>;
-    // Returns a read-only host view of the vote graph and ownership-resolution order
-    { B::host_vote(level) } -> std::same_as<VoteHost>;
-    // Returns a read-only host view of segments in ascending seed order
-    { B::host_linking(level) } -> std::same_as<LinkingHost>;
+    // Materialises all per-level stage outputs for observation after linking
+    // Views remain valid until the level is mutated; may wait and update staging buffers
+    { B::snapshot_views(level) } -> std::same_as<SnapshotViews>;
     // Waits for all previously submitted stages to finish
     { B::wait(context) };
 };

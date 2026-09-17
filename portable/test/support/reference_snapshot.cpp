@@ -1001,7 +1001,7 @@ inline suite<"snapshot_support"> snapshot_support_suite = [] {
         expect(buffers.seeds == std::vector<std::int32_t>{0, 1});
         expect(buffers.seed_order == std::vector<std::int32_t>{1, 0});
         fill_level(snapshot, 0, Stage::linking, buffers);
-        const LinkingHost linking = cpu::Backend::host_linking(buffers);
+        const LinkingHost linking = buffers.linking_view();
         expect(eq(linking.c, 1u));
         expect(std::ranges::equal(linking.seeds, std::array{1}));
         expect(std::ranges::equal(linking.segment_offsets, std::array{0, 2}));

@@ -657,8 +657,8 @@ void Backend::candidates(Context<Backend>& context, const Parameters& params) {
         if (candidates.slots.size() < count) {
             candidates.slots.resize(count);
         }
-        const EdgePointsHost points = host_edge_points(level);
-        const VoteHost vote = host_vote(level);
+        const EdgePointsHost points = level.edge_points_view();
+        const VoteHost vote = level.vote_view();
         const std::span<CandidateSlot> slots(candidates.slots.data(), count);
         for (std::size_t i = 0; i < count; ++i) {
             slots[i].reset(index, level.link_seeds[level.loop_one_order[i]], level.n);
@@ -710,7 +710,7 @@ void Backend::candidates(Context<Backend>& context, const Parameters& params) {
     }
 
     // Refit through level zero's host view after every level's candidate markers are known
-    const EdgePointsHost points = host_edge_points(context.levels[0]);
+    const EdgePointsHost points = context.levels[0].edge_points_view();
     for (int index = static_cast<int>(context.levels.size()) - 1; index >= 0; --index) {
         auto& slots = context.candidate_levels[index].slots;
         const auto count = std::min(

@@ -25,8 +25,4 @@ void Backend::pyramid(Buffers& coarser, const Buffers& finer) {
     cv::resize(finer.src, coarser.src, coarser.src.size());
 }
 
-PyramidHost Backend::host_pyramid(Buffers& level) {
-    return PyramidHost{level.src_plane().as_const()};
-}
-
 } // namespace cctag::portable::cpu

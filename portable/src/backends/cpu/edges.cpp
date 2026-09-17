@@ -117,11 +117,6 @@ void Backend::edges(Buffers& level, const Parameters& params) {
     }
 }
 
-EdgesHost Backend::host_edges(Buffers& level) {
-    // Return a read-only view of the thinned edges
-    return EdgesHost{level.edges_plane().as_const()};
-}
-
 } // namespace cctag::portable::cpu
 
 #ifdef CCTAG_TEST

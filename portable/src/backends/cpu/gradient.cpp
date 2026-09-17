@@ -42,9 +42,4 @@ void Backend::gradient(Buffers& level) {
     cv::filter2D(level.src, level.dy, CV_16SC1, kKernelDy, anchor, delta, cv::BORDER_REPLICATE);
 }
 
-GradientHost Backend::host_gradient(Buffers& level) {
-    // Return read-only views of `dx` and `dy`
-    return GradientHost{level.dx_plane().as_const(), level.dy_plane().as_const()};
-}
-
 } // namespace cctag::portable::cpu

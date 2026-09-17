@@ -61,6 +61,17 @@ struct LinkingHost {
     std::span<const float> avg_vote;
 };
 
+/// All per-level stage outputs for observation after linking, before candidates
+/// Borrows execution-backend storage; consume before mutating or reusing that level
+struct SnapshotViews {
+    PyramidHost pyramid;
+    GradientHost gradient;
+    EdgesHost edges;
+    EdgePointsHost edge_points;
+    VoteHost vote;
+    LinkingHost linking;
+};
+
 /// Read-only host view of the raw candidate markers across all pyramid levels
 struct CandidatesHost {
     std::uint32_t n;
@@ -81,6 +92,36 @@ struct MarkersHost {
 template <class T>
 inline cctag::Plane probe_plane(kernels::Plane<const T> plane) {
     return cctag::Plane{plane.width, plane.height, plane.stride * sizeof(T), plane.data};
+}
+
+/// Reports one level's stage outputs in probe order without copying their data
+inline void observe(Probe& probe, std::uint32_t level, const SnapshotViews& views) {
+    probe.pyramid(level, probe_plane(views.pyramid.src));
+    probe.gradient(level, probe_plane(views.gradient.dx), probe_plane(views.gradient.dy));
+    probe.edges(level, probe_plane(views.edges.edges));
+    const auto& points = views.edge_points;
+    probe.edge_points(level, {points.n, points.xy.data(), points.gradients.data()});
+    const auto& vote = views.vote;
+    probe.vote(
+        level,
+        {vote.links.data(),
+         vote.voters_offsets.data(),
+         vote.voters_values.data(),
+         vote.is_max.data(),
+         vote.flow_length.data(),
+         static_cast<std::uint32_t>(vote.seed_order.size()),
+         vote.seed_order.data()}
+    );
+    const auto& linking = views.linking;
+    probe.linking(
+        level,
+        {linking.c,
+         linking.seeds.data(),
+         linking.segment_offsets.data(),
+         linking.segment_values.data(),
+         linking.child_counts.data(),
+         linking.avg_vote.data()}
+    );
 }
 
 } // namespace cctag::portable

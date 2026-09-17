@@ -61,11 +61,6 @@ void Backend::edge_points(Buffers& level) {
     }
 }
 
-EdgePointsHost Backend::host_edge_points(Buffers& level) {
-    // Return read-only views of the interleaved coordinates and gradients
-    return EdgePointsHost{level.n, level.xy, level.gradients};
-}
-
 } // namespace cctag::portable::cpu
 
 #ifdef CCTAG_TEST
@@ -123,7 +118,7 @@ inline suite<"edge_points_stage"> edge_points_stage_suite = [] {
              -1,
              3);
         cpu::Backend::edge_points(level);
-        const EdgePointsHost points = cpu::Backend::host_edge_points(level);
+        const EdgePointsHost points = level.edge_points_view();
         expect(eq(points.n, 4u));
         expect(eq(points.xy.size(), xy.size())) << fatal;
         expect(eq(points.gradients.size(), gradients.size())) << fatal;
@@ -140,7 +135,7 @@ inline suite<"edge_points_stage"> edge_points_stage_suite = [] {
         const auto* gradient_storage = points.gradients.data();
         level.edges.setTo(0);
         cpu::Backend::edge_points(level);
-        const EdgePointsHost empty = cpu::Backend::host_edge_points(level);
+        const EdgePointsHost empty = level.edge_points_view();
         expect(eq(empty.n, 0u));
         expect(empty.xy.empty());
         expect(empty.gradients.empty());
@@ -149,7 +144,7 @@ inline suite<"edge_points_stage"> edge_points_stage_suite = [] {
         // A denser frame must also reuse the storage reserved for this level
         level.edges.setTo(255);
         cpu::Backend::edge_points(level);
-        const EdgePointsHost dense = cpu::Backend::host_edge_points(level);
+        const EdgePointsHost dense = level.edge_points_view();
         expect(eq(dense.n, 20u));
         expect(eq(dense.xy.data(), xy_storage));
         expect(eq(dense.gradients.data(), gradient_storage));

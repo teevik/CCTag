@@ -111,42 +111,8 @@ void detect(
     // Observe host views after all stages, outside the stage timings
     if (probe && probe->observes_stages()) {
         for (std::uint32_t level = 0; level < count; ++level) {
-            const PyramidHost pyramid = Backend::host_pyramid(levels[level]);
-            probe->pyramid(level, probe_plane(pyramid.src));
-            const GradientHost gradient = Backend::host_gradient(levels[level]);
-            probe->gradient(level, probe_plane(gradient.dx), probe_plane(gradient.dy));
-            const EdgesHost edges = Backend::host_edges(levels[level]);
-            probe->edges(level, probe_plane(edges.edges));
-            const EdgePointsHost points = Backend::host_edge_points(levels[level]);
-            probe->edge_points(
-                level,
-                cctag::EdgePointsView{points.n, points.xy.data(), points.gradients.data()}
-            );
-            const VoteHost vote = Backend::host_vote(levels[level]);
-            probe->vote(
-                level,
-                cctag::VoteView{
-                    vote.links.data(),
-                    vote.voters_offsets.data(),
-                    vote.voters_values.data(),
-                    vote.is_max.data(),
-                    vote.flow_length.data(),
-                    static_cast<std::uint32_t>(vote.seed_order.size()),
-                    vote.seed_order.data()
-                }
-            );
-            const LinkingHost linking = Backend::host_linking(levels[level]);
-            probe->linking(
-                level,
-                cctag::LinkingView{
-                    linking.c,
-                    linking.seeds.data(),
-                    linking.segment_offsets.data(),
-                    linking.segment_values.data(),
-                    linking.child_counts.data(),
-                    linking.avg_vote.data()
-                }
-            );
+            const SnapshotViews views = Backend::snapshot_views(levels[level]);
+            observe(*probe, level, views);
         }
     }
 
