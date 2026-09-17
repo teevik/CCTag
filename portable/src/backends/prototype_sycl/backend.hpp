@@ -37,6 +37,7 @@ struct Backend {
     static std::vector<int> hysteresis_case(Buffers&, const std::vector<int>&);
     static void edges(Buffers&, const Parameters&);
     static void edge_points(Buffers&);
+    static void check_device_points(Buffers&);
     static void vote(Buffers&, const Parameters&);
     static void linking(Buffers&, const Parameters&);
     static void candidates(Context<Backend>&, const Parameters&);

@@ -4,6 +4,7 @@
 #include "support/reference_snapshot.hpp"
 #include <iostream>
 #include <stdexcept>
+#include <random>
 
 int main() {
     using namespace cctag::portable;
@@ -57,6 +58,7 @@ int main() {
                     if(!mismatch.exact())throw std::runtime_error("reference-fed edges differs");
                     fill_level(snapshot,i,Stage::edges,level.host);
                     B::upload_edges(level);B::edge_points(level);
+                    B::check_device_points(level);
                     auto points=B::host_edge_points(level);
                     auto xy=compare_values<std::int32_t>(snapshot.tensor(Stage::edge_points,i,"xy"),points.xy);
                     auto gradients=compare_values<float>(snapshot.tensor(Stage::edge_points,i,"gradients"),points.gradients);
@@ -92,6 +94,23 @@ int main() {
             small.ensure(1,1025,1,1025);classes.assign(1025,1);classes[1024]=2;expected.assign(1025,2);
             if(B::hysteresis_case(small,classes)!=expected)throw std::runtime_error("long reverse chain");
             std::cout<<"PASS: independent diagonal, disconnected, unseeded, dense and 1025-pixel chain hysteresis\n";
+            // Independent serial graph traversal oracle; fixed seed and replayable shapes.
+            std::mt19937 rng(135);
+            for(int trial=0;trial<96;++trial){
+                int w=1+rng()%67,h=1+rng()%71;
+                small.ensure(w,h,w,h);classes.resize(w*h);
+                for(auto& value:classes)value=int(rng()%10)<(trial%3+1)?0:1;
+                for(int k=0;k<trial%9;++k)classes[rng()%classes.size()]=2;
+                expected=classes;std::vector<int> queue;
+                for(int i=0;i<w*h;++i)if(expected[i]==2)queue.push_back(i);
+                for(std::size_t at=0;at<queue.size();++at){int i=queue[at],x=i%w,y=i/w;
+                    for(int oy=-1;oy<=1;++oy)for(int ox=-1;ox<=1;++ox){int nx=x+ox,ny=y+oy;
+                        if(nx>=0&&nx<w&&ny>=0&&ny<h&&expected[ny*w+nx]==1){expected[ny*w+nx]=2;queue.push_back(ny*w+nx);}
+                    }
+                }
+                if(B::hysteresis_case(small,classes)!=expected)throw std::runtime_error("random connectivity trial="+std::to_string(trial));
+            }
+            std::cout<<"PASS: 96 reproducible independent connectivity masks, sparse/dense/unseeded and changing shapes\n";
             small.ensure(1,7,1,7);
             small.host.dx=(cv::Mat1s(7,1)<<11,3,10,2,3,3,0);small.host.dy.setTo(0);
             cctag::Parameters params(3);
@@ -124,6 +143,19 @@ int main() {
                 cv::Mat1i expected_map(4,5,-1);for(unsigned i=0;i<points.n;++i)expected_map(coords[2*i+1],coords[2*i])=i;
                 if(cv::countNonZero(expected_map!=small.host.edge_map))throw std::runtime_error("complete map rewrite");
                 if(cv::countNonZero(storage.colRange(0,2)!=-7)||cv::countNonZero(storage.colRange(7,9)!=-7))throw std::runtime_error("stride padding changed");
+            }
+            if(std::getenv("PROTOTYPE_SYCL_DEVICE_COUNTS")&&std::string(std::getenv("PROTOTYPE_SYCL_DEVICE_COUNTS"))=="1"){
+                setenv("PROTOTYPE_SYCL_FORCE_GROWTH","1",1);
+                prototype_sycl::Buffers growing;growing.bind(*context.execution);growing.ensure(17,13,17,13);
+                growing.host.edges.setTo(255);growing.host.dx.setTo(-123);growing.host.dy.setTo(456);
+                B::upload_edges(growing);B::edge_points(growing);
+                bool guarded=false;try{B::check_device_points(growing);}catch(const std::runtime_error& e){guarded=std::string(e.what()).find("status=3")!=std::string::npos;}
+                if(!guarded)throw std::runtime_error("undersized producer exposed incomplete points");
+                auto grown=B::host_edge_points(growing);B::check_device_points(growing);
+                if(grown.n!=221)throw std::runtime_error("capacity retry dropped points");
+                for(unsigned i=0;i<grown.n;++i)if(grown.xy[2*i]!=int(i%17)||grown.xy[2*i+1]!=int(i/17)||grown.gradients[2*i]!=-123||grown.gradients[2*i+1]!=456)throw std::runtime_error("capacity retry changed canonical collection");
+                unsetenv("PROTOTYPE_SYCL_FORCE_GROWTH");
+                std::cout<<"PASS: guarded capacity miss, exact scatter retry and device consumer before host views\n";
             }
             small.ensure(1,1,1,1);small.host.dx.setTo(-32768);small.host.dy.setTo(32767);
             B::upload_gradient(small);B::edges(small,params);

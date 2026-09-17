@@ -104,6 +104,8 @@ struct ExecutionState::Impl {
     bool pinned = enabled("PROTOTYPE_SYCL_PINNED");
     bool serialized = enabled("PROTOTYPE_SYCL_SERIALIZED");
     bool profiling = enabled("PROTOTYPE_SYCL_PROFILE");
+    bool components = enabled("PROTOTYPE_SYCL_COMPONENTS");
+    bool device_counts = enabled("PROTOTYPE_SYCL_DEVICE_COUNTS");
     std::string section = std::getenv("PROTOTYPE_SYCL_SECTION") ? std::getenv("PROTOTYPE_SYCL_SECTION") : "gradient";
     sycl::device device = selected_device();
     sycl::context context{device};
@@ -116,6 +118,7 @@ struct ExecutionState::Impl {
             throw std::invalid_argument("section must be gradient, full or compact");
         if (section != "gradient" && (pinned || !workers.threads.empty()))
             throw std::invalid_argument("extension requires ordinary staging and direct CPU calls");
+        std::cerr << "PROTOTYPE components=" << components << " device_counts=" << device_counts << "\n";
         std::cerr << "PROTOTYPE section=" << section << '\n';
         if (pinned && !device.has(sycl::aspect::usm_host_allocations))
             throw std::runtime_error("requested host USM unsupported");
@@ -158,7 +161,8 @@ struct Buffers::Impl {
     std::size_t extra_capacity = 0, point_capacity = 0;
     bool edges_current = false, points_current = false;
     sycl::event edge_event, point_event;
-    unsigned rounds = 0;
+    unsigned rounds = 0, control_reads = 0, capacity_retries = 0;
+    bool count_current = false;
     void reserve_extra(std::size_t size) {
         if (size <= extra_capacity) return;
         execution->wait();
@@ -256,6 +260,7 @@ void Buffers::ensure(std::uint32_t w, std::uint32_t h, std::uint32_t iw, std::ui
     host.ensure(w, h, iw, ih);
     host.prototype_compact_vote = impl->execution->impl->section == "compact";
     impl->edges_current = impl->points_current = false;
+    impl->count_current = false;
     impl->gradient_current = impl->gradient_submitted = false;
 }
 
@@ -441,7 +446,7 @@ sycl::event flood(Buffers& level, sycl::event dependency) {
         });});
     int active=0;
     q.submit([&](sycl::handler& c){c.depends_on(event);c.memcpy(&active,count,4);}).wait_and_throw();
-    s.rounds=0;
+    s.rounds=0;s.control_reads=1;
     while(active) {
         if (++s.rounds>static_cast<unsigned>(p)) throw std::runtime_error("hysteresis failed to terminate");
         zero=q.memset(count,0,4);
@@ -457,11 +462,61 @@ sycl::event flood(Buffers& level, sycl::event dependency) {
                 }
             });});
         q.submit([&](sycl::handler& c){c.depends_on(event);c.memcpy(&active,count,4);}).wait_and_throw();
+        ++s.control_reads;
         std::swap(a,b);
     }
     s.execution->impl->check();
     return event;
 }
+// Equivalent 8-connected components. Only decreasing parent links: no global barrier,
+// persistent work queue, or work-item waiting for another work-item to be scheduled.
+// Every failed strong CAS means its former root became smaller. Each traversal is
+// bounded by P, and each union makes progress down two decreasing root chains.
+int component_root(int* parent, int x) {
+    for (;;) {
+        int p=Atomic(parent[x]).load();
+        if(p==x)return x;
+        int gp=Atomic(parent[p]).load();
+        if(gp!=p){int expected=p;Atomic(parent[x]).compare_exchange_strong(expected,gp);}
+        x=p;
+    }
+}
+sycl::event components(Buffers& level, sycl::event dependency) {
+    static_assert(Atomic::required_alignment <= alignof(int));
+    auto& s=*level.impl; auto& q=s.execution->impl->queue;
+    const int w=level.host.width,h=level.host.height,p=w*h;
+    auto *classes=s.classes,*parent=s.front_a,*strong=s.front_b,*roots=s.offsets;
+    s.rounds=0;s.control_reads=0;
+    auto init=q.submit([&](sycl::handler& c){c.depends_on(dependency);
+        c.parallel_for(sycl::range<1>(p),[=](sycl::id<1> id){int i=id[0];parent[i]=i;strong[i]=0;});});
+    auto unite=q.submit([&](sycl::handler& c){c.depends_on(init);
+        c.parallel_for(sycl::range<1>(p),[=](sycl::id<1> id){
+            int i=id[0];if(!classes[i])return;int x=i%w,y=i/w;
+            // Each undirected edge is processed once (left and previous row).
+            for(int oy=-1;oy<=0;++oy)for(int ox=-1;ox<=1;++ox){
+                if(oy==0&&ox>=0)continue;
+                int nx=x+ox,ny=y+oy;if(nx<0||nx>=w||ny<0)continue;
+                int j=ny*w+nx;if(!classes[j])continue;
+                int a=component_root(parent,i),b=component_root(parent,j);
+                while(a!=b){
+                    int hi=a>b?a:b,lo=a>b?b:a,expected=hi;
+                    if(Atomic(parent[hi]).compare_exchange_strong(expected,lo))break;
+                    a=component_root(parent,expected);b=component_root(parent,lo);
+                }
+            }
+        });});
+    auto label=q.submit([&](sycl::handler& c){c.depends_on(unite);
+        c.parallel_for(sycl::range<1>(p),[=](sycl::id<1> id){
+            int i=id[0],r=i;while(parent[r]!=r)r=parent[r];roots[i]=r;
+            if(classes[i]==2)Atomic(strong[r]).store(1);
+        });});
+    return q.submit([&](sycl::handler& c){c.depends_on(label);
+        c.parallel_for(sycl::range<1>(p),[=](sycl::id<1> id){int i=id[0];if(classes[i]&&strong[roots[i]])classes[i]=2;});});
+}
+sycl::event hysteresis(Buffers& level,sycl::event dependency){
+    return level.impl->execution->impl->components?components(level,dependency):flood(level,dependency);
+}
+
 }
 void Backend::upload_gradient(Buffers& level) {
     auto& s=*level.impl; auto& q=s.execution->impl->queue;
@@ -488,7 +543,7 @@ std::vector<int> Backend::hysteresis_case(Buffers& level,const std::vector<int>&
     auto& s=*level.impl;auto& q=s.execution->impl->queue;
     if(input.size()!=std::size_t(level.host.width)*level.host.height) throw std::invalid_argument("case size");
     auto copy=q.memcpy(s.classes,input.data(),input.size()*4);
-    auto event=flood(level,copy);
+    auto event=hysteresis(level,copy);
     std::vector<int> output(input.size());
     q.submit([&](sycl::handler& c){c.depends_on(event);c.memcpy(output.data(),s.classes,input.size()*4);}).wait_and_throw();
     return output;
@@ -510,7 +565,7 @@ void Backend::edges(Buffers& level,const Parameters& params) {
                 if(x+ox>=0&&x+ox<w&&y+oy>=0&&y+oy<h) near[(oy+1)*3+ox+1]=mag[(y+oy)*w+x+ox];
             classes[i]=kernels::nms_class_at(dx[i],dy[i],near,low,high);
         });});
-    auto flooded=flood(level,nms);
+    auto flooded=hysteresis(level,nms);
     auto raw=q.submit([&](sycl::handler& c){c.depends_on(flooded);
         c.parallel_for(sycl::range<1>(p),[=](sycl::id<1> id){edges[id[0]]=classes[id[0]]==2?255:0;});});
     std::array<std::uint8_t,512> lut1,lut2;
@@ -525,11 +580,48 @@ void Backend::edges(Buffers& level,const Parameters& params) {
         });});
     s.edges_current=s.points_current=false;
 }
+namespace {
+sycl::event scatter_points(Buffers& level,sycl::event scan){
+    auto& s=*level.impl;auto& q=s.execution->impl->queue;
+    int w=level.host.width,h=level.host.height;std::size_t capacity=s.point_capacity;
+    auto *edges=s.edges;auto *offsets=s.offsets,*count=s.count,*xy=s.xy,*map=s.edge_map;
+    auto *gradients=s.point_gradients;auto *dx=s.dx,*dy=s.dy;
+    return q.submit([&](sycl::handler& c){c.depends_on(scan);
+        c.parallel_for(sycl::range<1>(h),[=](sycl::id<1> id){
+            // An incomplete producer writes nothing, and consumers use the same guard.
+            if(*count<0||unsigned(*count)>cpu::kMaxEdgePoints||std::size_t(*count)>capacity)return;
+            int y=id[0],index=offsets[y];
+            for(int x=0;x<w;++x){int i=y*w+x;
+                if(edges[i]==255){xy[2*index]=x;xy[2*index+1]=y;gradients[2*index]=dx[i];gradients[2*index+1]=dy[i];map[i]=index++;}
+                else map[i]=-1;
+            }
+        });});
+}
+void materialize_count(Buffers& level){
+    auto& s=*level.impl;if(s.count_current)return;auto& q=s.execution->impl->queue;
+    int n=0;q.submit([&](sycl::handler& c){c.depends_on(s.point_event);c.memcpy(&n,s.count,4);}).wait_and_throw();
+    ++s.control_reads;s.execution->impl->check();
+    if(n<0||unsigned(n)>cpu::kMaxEdgePoints)throw std::length_error("edge point limit");
+    if(std::size_t(n)>s.point_capacity){
+        // Retry only scatter from its valid scan checkpoint. No partial outputs escaped.
+        s.reserve_points(n);
+        if(s.execution->impl->device_counts){++s.capacity_retries;s.point_event=scatter_points(level,s.point_event);}
+    }
+    level.host.n=n;s.count_current=true;
+}
+}
 void Backend::edge_points(Buffers& level) {
     auto& s=*level.impl;auto& e=*s.execution->impl;auto& q=e.queue;
     if(e.section=="gradient") {baseline_edge_points(level);return;}
     int w=level.host.width,h=level.host.height;
     auto* edges=s.edges;auto* offsets=s.offsets;auto* count=s.count;
+    s.count_current=false;s.capacity_retries=0;
+    if(e.device_counts){
+        // Shape reservation bounds every possible output; no image count is downloaded.
+        std::size_t reserve=std::min(std::size_t(w)*h,std::size_t(cpu::kMaxEdgePoints));
+        if(enabled("PROTOTYPE_SYCL_FORCE_GROWTH"))reserve=std::min(reserve,std::size_t(2));
+        s.reserve_points(reserve);
+    }
     auto rows=q.submit([&](sycl::handler& c){c.depends_on(s.edge_event);
         c.parallel_for(sycl::range<1>(h),[=](sycl::id<1> id){int y=id[0],n=0;
             for(int x=0;x<w;++x)n+=edges[y*w+x]==255;offsets[y]=n;
@@ -537,18 +629,28 @@ void Backend::edge_points(Buffers& level) {
     auto scan=q.submit([&](sycl::handler& c){c.depends_on(rows);c.single_task([=]{
         int n=0;for(int y=0;y<h;++y){int k=offsets[y];offsets[y]=n;n+=k;}*count=n;
     });});
-    int n=0;q.submit([&](sycl::handler& c){c.depends_on(scan);c.memcpy(&n,count,4);}).wait_and_throw();
-    if(n<0||unsigned(n)>cpu::kMaxEdgePoints)throw std::length_error("edge point limit");
-    s.reserve_points(n);level.host.n=n;
-    auto* xy=s.xy;auto* gradients=s.point_gradients;auto* map=s.edge_map;auto* dx=s.dx;auto* dy=s.dy;
-    s.point_event=q.submit([&](sycl::handler& c){c.depends_on(scan);
-        c.parallel_for(sycl::range<1>(h),[=](sycl::id<1> id){int y=id[0],index=offsets[y];
-            for(int x=0;x<w;++x){int i=y*w+x;
-                if(edges[i]==255){xy[2*index]=x;xy[2*index+1]=y;gradients[2*index]=dx[i];gradients[2*index+1]=dy[i];map[i]=index++;}
-                else map[i]=-1;
+    if(!e.device_counts){s.point_event=scan;materialize_count(level);}
+    s.point_event=scatter_points(level,scan);s.points_current=false;
+}
+// A real device-only consumer validates the complete map/collection using the device
+// logical count before any host materialization. Used only in diagnostic validation.
+void Backend::check_device_points(Buffers& level){
+    auto& s=*level.impl;auto& q=s.execution->impl->queue;
+    auto *count=s.count,*map=s.edge_map,*xy=s.xy;auto* edges=s.edges;
+    int w=level.host.width,h=level.host.height;std::size_t capacity=s.point_capacity;
+    auto* result=s.front_b;auto event=q.submit([&](sycl::handler& c){c.depends_on(s.point_event);
+        c.single_task([=]{
+            *result=0;
+            if(*count<0||unsigned(*count)>cpu::kMaxEdgePoints){*result=2;return;}
+            if(std::size_t(*count)>capacity){*result=3;return;}
+            int n=0;for(int y=0;y<h;++y)for(int x=0;x<w;++x){int i=y*w+x;
+                if(edges[i]==255){if(map[i]!=n||xy[2*n]!=x||xy[2*n+1]!=y)*result=1;++n;}
+                else if(map[i]!=-1)*result=1;
             }
+            if(n!=*count)*result=1;
         });});
-    s.points_current=false;
+    int status=0;q.submit([&](sycl::handler& c){c.depends_on(event);c.memcpy(&status,result,4);}).wait_and_throw();
+    s.execution->impl->check();if(status)throw std::runtime_error("device collection consumer status="+std::to_string(status));
 }
 EdgesHost Backend::host_edges(Buffers& level) {
     auto& s=*level.impl;auto& q=s.execution->impl->queue;
@@ -568,6 +670,7 @@ EdgePointsHost Backend::host_edge_points(Buffers& level) {
     auto& s=*level.impl;auto& e=*s.execution->impl;auto& q=e.queue;auto& host=level.host;
     if(e.section=="gradient"){wait_host(level);return cpu::Backend::host_edge_points(host);}
     if(!s.points_current){
+        materialize_count(level);
         auto start=Clock::now();std::vector<sycl::event> copies;
         host.xy.resize(2*host.n);host.gradients.resize(2*host.n);
         auto copy=[&](void* out,const void* in,std::size_t bytes){if(bytes) copies.push_back(q.submit([&](sycl::handler& c){c.depends_on(s.point_event);c.memcpy(out,in,bytes);}));};
@@ -586,7 +689,7 @@ EdgePointsHost Backend::host_edge_points(Buffers& level) {
         if(e.section=="full")host_gradient(level);
         s.points_current=true;
         if(e.profiling)std::cerr<<"PROTOTYPE_SECTION width="<<host.width<<" height="<<host.height<<" points="<<host.n
-            <<" boundary="<<e.section<<" rounds="<<s.rounds<<" control_d2h_bytes="<<4*(s.rounds+2)
+            <<" boundary="<<e.section<<" rounds="<<s.rounds<<" control_reads="<<s.control_reads<<" capacity_retries="<<s.capacity_retries<<" control_d2h_bytes="<<4*s.control_reads
             <<" continuation_d2h_bytes="<<(16*std::size_t(host.n)+(e.section=="full"?8*std::size_t(host.width)*host.height:0))
             <<" point_map_copy_wall_ns="<<transfer_ns<<" host_rebuild_ns="<<rebuild_ns
             <<" extra_device_capacity_bytes="<<(30*s.extra_capacity+28+16*s.point_capacity)<<'\n';
