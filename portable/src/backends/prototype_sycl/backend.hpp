@@ -31,6 +31,10 @@ struct Backend {
     static void load(Buffers&, kernels::Plane<const std::uint8_t>);
     static void pyramid(Buffers&, const Buffers&);
     static void gradient(Buffers&);
+    // THROWAWAY reference-fed stage inputs and independent connectivity experiments.
+    static void upload_gradient(Buffers&);
+    static void upload_edges(Buffers&);
+    static std::vector<int> hysteresis_case(Buffers&, const std::vector<int>&);
     static void edges(Buffers&, const Parameters&);
     static void edge_points(Buffers&);
     static void vote(Buffers&, const Parameters&);

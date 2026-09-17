@@ -31,23 +31,21 @@ descent_step(float dx, float dy, int& x, int& y, float& error, int& step_x, int&
 }
 
 /// Follows the gradient from one edge point, skipping the first pixel
-inline std::int32_t descent_at(
+inline std::int32_t descent_from_gradient_at(
     int x,
     int y,
     int direction,
     Plane<const std::int32_t> edge_map,
-    Plane<const std::int16_t> image_dx,
-    Plane<const std::int16_t> image_dy,
+    float point_dx,
+    float point_dy,
     std::uint32_t input_width,
     std::uint32_t input_height,
     std::size_t max_steps,
     int gradient_threshold
 ) {
-    const int origin_x = x;
-    const int origin_y = y;
     float error = 0.f;
-    float dx = direction * image_dx.row(y)[x];
-    float dy = direction * image_dy.row(y)[x];
+    float dx = direction * point_dx;
+    float dy = direction * point_dy;
     const float reference_dx = dx;
     const float reference_dy = dy;
     const bool vertical = std::abs(dy) > std::abs(dx);
@@ -74,8 +72,8 @@ inline std::int32_t descent_at(
 
     step();
     if (dx * dx + dy * dy > gradient_threshold) {
-        const float dx2 = image_dx.row(origin_y)[origin_x];
-        const float dy2 = image_dy.row(origin_y)[origin_x];
+        const float dx2 = point_dx;
+        const float dy2 = point_dy;
         const float dot = dx2 * reference_dx + dy2 * reference_dy;
         direction = (dot > 0) - (dot < 0);
         dx = direction * dx2;
@@ -107,6 +105,14 @@ inline std::int32_t descent_at(
         }
     }
     return -1;
+}
+
+// Original plane interface retained as the experiment's unchanged voting control.
+inline std::int32_t descent_at(int x, int y, int direction,
+    Plane<const std::int32_t> map, Plane<const std::int16_t> dx,
+    Plane<const std::int16_t> dy, std::uint32_t iw, std::uint32_t ih,
+    std::size_t steps, int threshold) {
+    return descent_from_gradient_at(x,y,direction,map,dx.row(y)[x],dy.row(y)[x],iw,ih,steps,threshold);
 }
 
 /// One edge point's vote, or -1 when its field-line walk found no seed

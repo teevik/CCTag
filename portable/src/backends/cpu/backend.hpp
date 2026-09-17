@@ -47,6 +47,7 @@ struct Buffers {
     cv::Mat1i edge_map;
     /// Edge-point collection in canonical order, with interleaved (x, y) and (dx, dy) pairs
     std::uint32_t n = 0;
+    bool prototype_compact_vote = false;
     std::vector<std::int32_t> xy;
     std::vector<float> gradients;
     /// Per-row counts, replaced by exclusive offsets before scattering edge points

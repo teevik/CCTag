@@ -48,6 +48,14 @@ void Backend::vote(Buffers& level, const Parameters& params) {
 #pragma omp parallel for schedule(static)
     for (int i = 0; i < n; ++i) {
         for (int side = 0; side < 2; ++side) {
+            if (level.prototype_compact_vote) {
+                level.links[2 * i + side] = kernels::descent_from_gradient_at(
+                    level.xy[2*i], level.xy[2*i+1], 2*side-1, edge_map,
+                    level.gradients[2*i], level.gradients[2*i+1],
+                    level.input_width, level.input_height, params._distSearch,
+                    params._thrGradientMagInVote);
+                continue;
+            }
             level.links[2 * i + side] = kernels::descent_at(
                 level.xy[2 * i],
                 level.xy[2 * i + 1],
