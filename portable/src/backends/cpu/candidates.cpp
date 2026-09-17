@@ -662,7 +662,7 @@ void refit_at_level_zero(EdgePointsHost points, int width, int height, Candidate
 
 void Backend::candidates(Context<Backend>& context, const Parameters& params) {
     context.candidate_levels.resize(context.levels.size());
-    std::size_t marker_count = 0;
+    context.candidate_markers.clear();
     for (int index = static_cast<int>(context.levels.size()) - 1; index >= 0; --index) {
         auto& level = context.levels[index];
         auto& candidates = context.candidate_levels[index];
@@ -751,13 +751,9 @@ void Backend::candidates(Context<Backend>& context, const Parameters& params) {
                 continue;
             }
             refit_at_level_zero(points, context.width, context.height, slot);
-            if (marker_count == context.candidate_markers.size()) {
-                context.candidate_markers.emplace_back();
-            }
-            context.candidate_markers[marker_count++] = slot.marker;
+            context.candidate_markers.push_back(slot.marker);
         }
     }
-    context.candidate_markers.resize(marker_count);
 }
 
 } // namespace cctag::portable::cpu

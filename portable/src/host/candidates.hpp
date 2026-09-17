@@ -12,6 +12,7 @@
 #include "kernels/pcg32.hpp"
 
 #include <cstdint>
+#include <span>
 #include <vector>
 
 namespace cctag::portable {
@@ -31,6 +32,34 @@ struct CandidateMarker {
     Eigen::Vector2f center = Eigen::Vector2f::Zero();
     Ellipse rescaled_outer_ellipse;
     std::vector<DirectedPoint> outer_points;
+};
+
+/// Active candidate markers backed by storage retained across frames, including outer points
+class CandidateMarkers {
+  public:
+    void clear() {
+        count = 0;
+    }
+
+    void push_back(const CandidateMarker& marker) {
+        if (count == storage.size()) {
+            storage.emplace_back();
+        }
+        storage[count] = marker;
+        ++count;
+    }
+
+    std::span<CandidateMarker> view() {
+        return {storage.data(), count};
+    }
+
+    std::span<const CandidateMarker> view() const {
+        return {storage.data(), count};
+    }
+
+  private:
+    std::vector<CandidateMarker> storage;
+    std::size_t count = 0;
 };
 
 /// One candidate's loop-two result and private scratch for growing, assembly and refitting

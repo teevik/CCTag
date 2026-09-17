@@ -158,11 +158,12 @@ int main(int argc, const char** argv) {
                         << snapshot.problem() << "levels";
                     expect(std::ranges::equal(expected.quality, actual.quality))
                         << snapshot.problem() << "quality";
-                    expect(eq(fresh.candidate_markers.size(), reused.candidate_markers.size()))
-                        << fatal;
-                    for (std::size_t i = 0; i < fresh.candidate_markers.size(); ++i) {
-                        const auto& a = fresh.candidate_markers[i].outer_points;
-                        const auto& b = reused.candidate_markers[i].outer_points;
+                    const auto fresh_candidates = fresh.candidate_markers.view();
+                    const auto reused_candidates = reused.candidate_markers.view();
+                    expect(eq(fresh_candidates.size(), reused_candidates.size())) << fatal;
+                    for (std::size_t i = 0; i < fresh_candidates.size(); ++i) {
+                        const auto& a = fresh_candidates[i].outer_points;
+                        const auto& b = reused_candidates[i].outer_points;
                         expect(eq(a.size(), b.size()))
                             << snapshot.problem() << "outer point count" << fatal;
                         expect(
@@ -181,6 +182,72 @@ int main(int argc, const char** argv) {
                 }
             }
             omp_set_num_threads(threads);
+        };
+        "candidate storage survives fewer and zero results without exposing stale markers"_test =
+            [] {
+            for (const auto& file : snapshot_files_or_fail()) {
+                const ReferenceSnapshot snapshot = ReferenceSnapshot::read(file);
+                const cctag::Parameters params(snapshot.crowns());
+                Context<cpu::Backend> context;
+                fill_context(snapshot, Stage::linking, context);
+                cpu::Backend::candidates(context, params);
+                const auto initial = context.candidate_markers.view();
+                const std::vector<CandidateMarker> expected(initial.begin(), initial.end());
+                expect(!expected.empty()) << snapshot.problem() << fatal;
+
+                // Reserve beyond the current point count so losing and rebuilding a marker
+                // cannot accidentally satisfy the storage-reuse check via allocator reuse.
+                std::vector<std::size_t> capacities;
+                for (auto& marker : context.candidate_markers.view()) {
+                    marker.outer_points.reserve(marker.outer_points.size() + 16);
+                    capacities.push_back(marker.outer_points.capacity());
+                }
+                for (const std::size_t limit : {1u, 0u}) {
+                    cctag::Parameters fewer = params;
+                    fewer._maximumNbCandidatesLoopTwo = limit;
+                    cpu::Backend::candidates(context, fewer);
+                    const auto active_count = context.candidate_markers.view().size();
+                    expect(active_count <= context.levels.size() * limit) << snapshot.problem();
+                    if (limit == 0) {
+                        expect(eq(active_count, 0u));
+                    }
+                    const CandidatesHost view = host_candidates(context);
+                    expect(eq(view.n, active_count));
+                    expect(eq(view.ellipses.size(), 5 * active_count));
+                    expect(eq(view.levels.size(), active_count));
+                    expect(eq(view.quality.size(), active_count));
+
+                    fewer._doIdentification = false;
+                    cpu::Backend::markers(context, fewer);
+                    // Unidentified candidates survive deduplication, so every active input
+                    // must appear exactly once and retained inactive storage must stay hidden.
+                    expect(eq(context.markers.size(), active_count));
+
+                    cpu::Backend::candidates(context, params);
+                    const auto restored = context.candidate_markers.view();
+                    expect(eq(restored.size(), expected.size())) << fatal;
+                    for (std::size_t i = 0; i < expected.size(); ++i) {
+                        const auto& actual = restored[i];
+                        expect(actual.outer_points.capacity() >= capacities[i])
+                            << snapshot.problem() << "outer point storage at candidate" << i;
+                        expect(actual.center == expected[i].center);
+                        expect(
+                            actual.rescaled_outer_ellipse.conic
+                            == expected[i].rescaled_outer_ellipse.conic
+                        );
+                        expect(eq(actual.quality, expected[i].quality));
+                        expect(
+                            std::ranges::equal(
+                                actual.outer_points,
+                                expected[i].outer_points,
+                                [](const auto& a, const auto& b) {
+                            return a.x == b.x && a.y == b.y && a.dx == b.dx && a.dy == b.dy;
+                        }
+                            )
+                        );
+                    }
+                }
+            }
         };
         "candidates match reference snapshot from reference linking and level zero edges"_test =
             [] {

@@ -109,7 +109,7 @@ bool fit_ellipse(
     }
     Eigen::Matrix3f constraint;
     constraint << 0.f, 0.f, 0.5f, 0.f, -1.f, 0.f, 0.5f, 0.f, 0.f;
-    const Eigen::Matrix3f t = -s3.inverse() * s2.transpose();
+    const Eigen::Matrix3f t = -inverse * s2.transpose();
     const Eigen::Matrix3f m = constraint * (s1 + s2 * t);
     if (!m.allFinite()) {
         return false;

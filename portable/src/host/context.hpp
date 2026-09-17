@@ -29,7 +29,7 @@ struct Context {
     std::uint32_t height = 0;
     std::vector<typename Backend::Buffers> levels;
     std::vector<CandidateLevel> candidate_levels;
-    std::vector<CandidateMarker> candidate_markers;
+    CandidateMarkers candidate_markers;
     /// Contiguous probe rows, filled from the raw candidate markers
     std::vector<float> candidate_ellipses;
     std::vector<std::int32_t> candidate_pyramid_levels;
@@ -78,7 +78,8 @@ CandidatesHost host_candidates(Context<Backend>& context) {
     context.candidate_ellipses.clear();
     context.candidate_pyramid_levels.clear();
     context.candidate_quality.clear();
-    for (const auto& marker : context.candidate_markers) {
+    const auto candidates = context.candidate_markers.view();
+    for (const auto& marker : candidates) {
         const auto& ellipse = marker.rescaled_outer_ellipse;
         context.candidate_ellipses.insert(
             context.candidate_ellipses.end(),
@@ -88,7 +89,7 @@ CandidatesHost host_candidates(Context<Backend>& context) {
         context.candidate_quality.push_back(marker.quality);
     }
     return {
-        static_cast<std::uint32_t>(context.candidate_markers.size()),
+        static_cast<std::uint32_t>(candidates.size()),
         context.candidate_ellipses,
         context.candidate_pyramid_levels,
         context.candidate_quality

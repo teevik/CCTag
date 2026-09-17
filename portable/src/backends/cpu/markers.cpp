@@ -543,7 +543,8 @@ void Backend::markers(Context<Backend>& context, const Parameters& params) {
         throw std::invalid_argument("markers: invalid cut sampling or center search parameters");
     }
     context.bank.ensure(params._nCrowns);
-    const auto count = context.candidate_markers.size();
+    const std::span<const CandidateMarker> candidates = context.candidate_markers.view();
+    const auto count = candidates.size();
     context.identified_markers.resize(count);
     if (context.identification.size() < count) {
         context.identification.resize(count);
@@ -552,7 +553,7 @@ void Backend::markers(Context<Backend>& context, const Parameters& params) {
 #pragma omp parallel for schedule(dynamic, 1)
     for (int i = 0; i < static_cast<int>(count); ++i) {
         identify(
-            context.candidate_markers[i],
+            candidates[i],
             context.identified_markers[i],
             context.identification[i],
             image,
@@ -613,7 +614,7 @@ suite<"markers_stage"> markers_suite = [] {
             const float x = std::cos(angle), y = std::sin(angle);
             candidate.outer_points.push_back({128 + 40 * x, 128 + 40 * y, x, y});
         }
-        context.candidate_markers = {candidate};
+        context.candidate_markers.push_back(candidate);
         Backend::markers(context, params);
         expect(eq(context.markers.size(), 1u)) << fatal;
         // The initial homography is invalid, but the first grid reaches inside the ellipse
@@ -630,7 +631,8 @@ suite<"markers_stage"> markers_suite = [] {
         candidate.center = {12, 13};
         expect(candidate.rescaled_outer_ellipse.set_parameters(14, 15, 8, 6, 0.3f));
         candidate.quality = 7;
-        context.candidate_markers = {candidate, candidate};
+        context.candidate_markers.push_back(candidate);
+        context.candidate_markers.push_back(candidate);
         Backend::markers(context, params);
         // Unidentified overlaps survive both dedup passes, with the candidate's center intact
         expect(eq(context.markers.size(), 2u)) << fatal;
@@ -661,15 +663,15 @@ suite<"markers_stage"> markers_suite = [] {
             const float x = std::cos(angle), y = std::sin(angle);
             candidate.outer_points.push_back({16 + 6 * x, 16 + 6 * y, x, y});
         }
-        context.candidate_markers = {candidate};
+        context.candidate_markers.push_back(candidate);
         Backend::markers(context, params);
         expect(eq(context.markers.front().status, -2)); // Constant cuts fail the variance gate
-        for (auto& point : context.candidate_markers.front().outer_points) {
+        for (auto& point : context.candidate_markers.view().front().outer_points) {
             point.x += 100;
         }
         Backend::markers(context, params);
         expect(eq(context.markers.front().status, -1)); // All cuts leave the image
-        context.candidate_markers.front().outer_points.resize(4);
+        context.candidate_markers.view().front().outer_points.resize(4);
         Backend::markers(context, params);
         expect(eq(context.markers.front().status, -1)); // Too few outer points
     };
