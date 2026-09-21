@@ -1,9 +1,9 @@
 cmake_minimum_required(VERSION 3.20)
 
-set(CCTAG_PORTABLE_BACKEND "cpu" CACHE STRING "Execution backend of the portable pipeline: cpu")
-set_property(CACHE CCTAG_PORTABLE_BACKEND PROPERTY STRINGS cpu)
-if(NOT CCTAG_PORTABLE_BACKEND STREQUAL "cpu")
-  message(FATAL_ERROR "CCTAG_PORTABLE_BACKEND must be 'cpu', got '${CCTAG_PORTABLE_BACKEND}'")
+set(CCTAG_PORTABLE_BACKEND "cpu" CACHE STRING "Execution backend of the portable pipeline: cpu or sycl (stub)")
+set_property(CACHE CCTAG_PORTABLE_BACKEND PROPERTY STRINGS cpu sycl)
+if(NOT CCTAG_PORTABLE_BACKEND MATCHES "^(cpu|sycl)$")
+  message(FATAL_ERROR "CCTAG_PORTABLE_BACKEND must be 'cpu' or 'sycl', got '${CCTAG_PORTABLE_BACKEND}'")
 endif()
 
 # Separate sanitizer names with commas, e.g. address,undefined
@@ -15,7 +15,10 @@ add_library(CCTag
     ${PROJECT_SOURCE_DIR}/src/cctag/geometry/Ellipse.cpp
     src/ICCTag.cpp
     src/host/ellipse.cpp
-    src/host/markers.cpp
+    src/host/markers.cpp)
+
+if(CCTAG_PORTABLE_BACKEND STREQUAL "cpu")
+  target_sources(CCTag PRIVATE
     src/backends/cpu/buffers.cpp
     src/backends/cpu/pyramid.cpp
     src/backends/cpu/gradient.cpp
@@ -25,6 +28,7 @@ add_library(CCTag
     src/backends/cpu/linking.cpp
     src/backends/cpu/candidates.cpp
     src/backends/cpu/markers.cpp)
+endif()
 
 find_package(OpenMP REQUIRED COMPONENTS CXX)
 set(THREADS_PREFER_PTHREAD_FLAG ON)
@@ -68,7 +72,13 @@ target_link_libraries(CCTag
       OpenMP::OpenMP_CXX
       Threads::Threads)
 
-if(CCTAG_BUILD_TESTS)
+if(CCTAG_PORTABLE_BACKEND STREQUAL "sycl")
+  message(WARNING "The SYCL execution backend is a stub: all detection stages are empty.")
+  add_subdirectory(src/backends/sycl)
+endif()
+
+# These suites validate the implemented CPU stages, not the empty SYCL scaffold.
+if(CCTAG_BUILD_TESTS AND CCTAG_PORTABLE_BACKEND STREQUAL "cpu")
   find_package(ut 2.3.1 REQUIRED CONFIG)
   find_package(OpenSSL REQUIRED COMPONENTS Crypto)
 

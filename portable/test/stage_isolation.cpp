@@ -286,7 +286,7 @@ int main(int argc, const char** argv) {
                 if (const char* file = std::getenv("CCTAG_CANDIDATE_ALLOWANCE");
                     !accepted && file) {
                     const auto allowance = CandidateAllowance::read(file);
-                    accepted = allowance.allows(snapshot, comparison, "fork/cpu");
+                    accepted = allowance.allows(snapshot, comparison, "portable/cpu");
                     if (accepted) {
                         std::cout << snapshot.problem() << ": " << describe(comparison)
                                   << "; accepted: " << allowance.reason << '\n';

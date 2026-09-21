@@ -18,6 +18,11 @@
 namespace cctag::portable {
 using SelectedBackend = cpu::Backend;
 }
+#elif defined(CCTAG_PORTABLE_BACKEND_SYCL)
+#include "backends/sycl/backend.hpp"
+namespace cctag::portable {
+using SelectedBackend = sycl_backend::Backend;
+}
 #else
 #error "CCTAG_PORTABLE_BACKEND_<NAME> must be defined for exactly one execution backend"
 #endif
