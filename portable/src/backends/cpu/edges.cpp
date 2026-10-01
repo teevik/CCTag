@@ -120,6 +120,35 @@ namespace cctag::portable::tests::edges_stage {
 using namespace boost::ut;
 
 inline suite<"edges_stage"> edges_stage_suite = [] {
+    "diagonal weak edges connect in every direction regardless of column alignment"_test = [] {
+        cpu::Buffers level;
+        level.ensure(13, 9);
+        for (int x = 4; x < 8; ++x) {
+            for (int ox : {-1, 1}) {
+                for (int oy : {-1, 1}) {
+                    level.dx.setTo(0); level.dy.setTo(0);
+                    level.dx(4, x) = 3;
+                    level.dx(4 + oy, x + ox) = 11;
+                    cpu::Backend::edges(level, cctag::Parameters(3));
+                    expect(eq(int(level.edges(4, x)), 1));
+                    expect(eq(int(level.edges(4 + oy, x + ox)), 1));
+                    expect(eq(cv::countNonZero(level.edges), 2));
+                }
+            }
+        }
+    };
+    "trailing columns propagate strength before thinning clears the border"_test = [] {
+        cpu::Buffers level;
+        for (int width = 5; width < 9; ++width) {
+            level.ensure(width, 5);
+            level.dx.setTo(0); level.dy.setTo(0);
+            level.dy(2, width - 1) = 11;
+            level.dx(1, width - 2) = 3;
+            cpu::Backend::edges(level, cctag::Parameters(3));
+            expect(eq(int(level.edges(1, width - 2)), 1));
+            expect(eq(cv::countNonZero(level.edges), 1));
+        }
+    };
     "edges retain weak pixels connected to a strong pixel and clear reused scratch"_test = [] {
         cpu::Buffers level;
         level.ensure(4, 7);
