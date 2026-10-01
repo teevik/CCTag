@@ -17,11 +17,15 @@ namespace cctag
 using namespace std;
 
 TagThread::TagThread( TagThreads* creator, TagPipe* pipe, int layer )
-    : std::thread( &TagThread::call, this )
+    : std::thread()
     , _creator( creator )
     , _pipe( pipe )
     , _my_layer( layer )
-{ }
+{
+    // The std::thread base is constructed before the members, so start the
+    // worker only once _creator, _pipe and _my_layer are set
+    std::thread::operator=( std::thread( &TagThread::call, this ) );
+}
 
 void TagThread::call( void )
 {
@@ -91,4 +95,3 @@ void TagSemaphore::post( int n )
 }
 
 }; // namespace cctag
-

@@ -15,7 +15,6 @@
 #include <cctag/Params.hpp>
 
 #include <algorithm>
-#include <bit>
 #include <cstdint>
 #include <stdexcept>
 #include <vector>
@@ -45,13 +44,13 @@ struct Context {
 
     void ensure(std::uint32_t input_width, std::uint32_t input_height, const Parameters& params) {
         const std::size_t count = params._numberOfProcessedMultiresLayers;
-        // Every configured level must remain nonempty after integer halving.
+        // Levels halve with rounding up, so small images repeat 1x1 levels. The last level
+        // index is at most 30, keeping its scale 2^30 a positive 32-bit int.
         // Validate before changing buffers so a rejected request leaves the context reusable.
-        const auto max_levels = std::bit_width(std::min(input_width, input_height));
-        if (count == 0 || count > static_cast<std::size_t>(max_levels)) {
+        constexpr std::size_t max_levels = 31;
+        if (input_width == 0 || input_height == 0 || count == 0 || count > max_levels) {
             throw std::invalid_argument(
-                "cctagDetection: processed pyramid level count must be positive and keep every "
-                "level's width and height at least one pixel"
+                "cctagDetection: invalid dimensions or processed pyramid level count"
             );
         }
         if (input_width == width && input_height == height && levels.size() == count) {
@@ -63,9 +62,9 @@ struct Context {
         std::uint32_t level_width = input_width;
         std::uint32_t level_height = input_height;
         for (auto& level : levels) {
-            level.ensure(level_width, level_height, input_width, input_height);
-            level_width /= 2;
-            level_height /= 2;
+            level.ensure(level_width, level_height);
+            level_width = level_width / 2 + level_width % 2;
+            level_height = level_height / 2 + level_height % 2;
         }
         width = input_width;
         height = input_height;
@@ -122,30 +121,50 @@ MarkersHost host_markers(Context<Backend>& context) {
 
 #include <boost/ut.hpp>
 
+#include <array>
+
 namespace cctag::portable::tests::context {
 
 using namespace boost::ut;
 
 inline suite<"context"> context_suite = [] {
-    "context sizes levels by integer halving"_test = [] {
+    "pyramid levels halve each dimension rounding up and repeat one pixel levels"_test = [] {
         Context<cpu::Backend> context;
-        const cctag::Parameters params(3);
+        cctag::Parameters params(3);
+        params._numberOfProcessedMultiresLayers = 4;
+        using Sizes = std::vector<std::array<std::uint32_t, 2>>;
+        const auto level_sizes = [&] {
+            Sizes sizes;
+            for (const auto& level : context.levels) {
+                sizes.push_back({level.width, level.height});
+            }
+            return sizes;
+        };
 
-        // Use odd dimensions to check rounding when halving
-        constexpr std::uint32_t input_width = 37;
-        constexpr std::uint32_t input_height = 23;
-        context.ensure(input_width, input_height, params);
+        context.ensure(37, 23, params);
+        expect(std::ranges::equal(level_sizes(), Sizes{{37, 23}, {19, 12}, {10, 6}, {5, 3}}));
+        context.ensure(5, 1, params);
+        expect(std::ranges::equal(level_sizes(), Sizes{{5, 1}, {3, 1}, {2, 1}, {1, 1}}));
+        context.ensure(1, 2, params);
+        expect(std::ranges::equal(level_sizes(), Sizes{{1, 2}, {1, 1}, {1, 1}, {1, 1}}));
+    };
 
-        // Check that all configured levels were created
-        expect(eq(context.levels.size(), params._numberOfProcessedMultiresLayers)) << fatal;
-
-        // Level 1 halves each input dimension, rounding down
-        expect(eq(context.levels[1].width, input_width / 2));
-        expect(eq(context.levels[1].height, input_height / 2));
-
-        // Level 3 divides each input dimension by 8, rounding down
-        expect(eq(context.levels[3].width, input_width / 8));
-        expect(eq(context.levels[3].height, input_height / 8));
+    "context accepts one to thirty one levels and a nonempty image"_test = [] {
+        Context<cpu::Backend> context;
+        cctag::Parameters params(3);
+        for (const std::size_t count : {1u, 31u}) {
+            params._numberOfProcessedMultiresLayers = count;
+            context.ensure(1, 1, params);
+            expect(eq(context.levels.size(), count));
+        }
+        // The last level's scale 2^(count - 1) must fit in a positive 32-bit int
+        for (const std::size_t count : {0u, 32u}) {
+            params._numberOfProcessedMultiresLayers = count;
+            expect(throws<std::invalid_argument>([&] { context.ensure(1, 1, params); }));
+        }
+        params._numberOfProcessedMultiresLayers = 4;
+        expect(throws<std::invalid_argument>([&] { context.ensure(0, 5, params); }));
+        expect(throws<std::invalid_argument>([&] { context.ensure(5, 0, params); }));
     };
 
     "context reuses level zero storage when dimensions are unchanged"_test = [] {
@@ -154,7 +173,6 @@ inline suite<"context"> context_suite = [] {
         context.ensure(37, 23, params);
         const void* before = context.levels[0].src.data;
         context.ensure(37, 23, params);
-        // Check that level 0 keeps the same allocation
         expect(eq(before, static_cast<const void*>(context.levels[0].src.data)));
     };
 };

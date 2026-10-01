@@ -12,19 +12,14 @@
 #include <boost/json.hpp>
 #include <boost/json/src.hpp>
 
-#include <openssl/evp.h>
-
 #include <algorithm>
 #include <array>
 #include <charconv>
 #include <cmath>
 #include <cstdlib>
 #include <fstream>
-#include <memory>
-#include <numbers>
 #include <numeric>
-#include <sstream>
-#include <tuple>
+#include <type_traits>
 
 namespace cctag::portable::test {
 
@@ -44,61 +39,6 @@ Dtype parse_dtype(const std::string& name, const std::string& tensor) {
         return Dtype::f32;
     }
     throw std::runtime_error(tensor + ": unsupported dtype " + name);
-}
-
-struct CandidateRow {
-    std::array<float, 5> ellipse;
-    std::int32_t level;
-    float quality;
-    std::size_t index = 0;
-};
-
-float center_distance(const CandidateRow& a, const CandidateRow& b) {
-    const float x = a.ellipse[0] - b.ellipse[0], y = a.ellipse[1] - b.ellipse[1];
-    return std::sqrt(x * x + y * y);
-}
-
-std::vector<CandidateRow> candidate_rows(CandidatesHost candidates) {
-    if (candidates.ellipses.size() != std::size_t{candidates.n} * 5
-        || candidates.levels.size() != candidates.n || candidates.quality.size() != candidates.n
-        || !std::ranges::all_of(candidates.ellipses, [](float value) {
-        return std::isfinite(value);
-    }) || !std::ranges::all_of(candidates.quality, [](float value) {
-        return std::isfinite(value);
-    })) {
-        throw std::runtime_error("candidates: inconsistent row counts or non-finite values");
-    }
-    std::vector<CandidateRow> rows;
-    for (std::size_t i = 0; i < candidates.n; ++i) {
-        CandidateRow row;
-        std::copy_n(candidates.ellipses.begin() + 5 * i, 5, row.ellipse.begin());
-        row.index = i;
-        row.level = candidates.levels[i];
-        row.quality = candidates.quality[i];
-        rows.push_back(row);
-    }
-    // The snapshot probe canonicalizes before Rules::Tolerant deduplicates by quality
-    std::sort(rows.begin(), rows.end(), [](const auto& a, const auto& b) {
-        return std::tie(a.level, a.ellipse[1], a.ellipse[0])
-            < std::tie(b.level, b.ellipse[1], b.ellipse[0]);
-    });
-    std::vector<CandidateRow> deduplicated;
-    for (const auto& row : rows) {
-        bool found = false;
-        for (auto& current : deduplicated) {
-            if (center_distance(row, current)
-                < 0.5f * std::max(row.ellipse[3], current.ellipse[3])) {
-                if (row.quality > current.quality) {
-                    current = row;
-                }
-                found = true;
-            }
-        }
-        if (!found) {
-            deduplicated.push_back(row);
-        }
-    }
-    return deduplicated;
 }
 
 constexpr const char* kStageNames[] = {
@@ -358,6 +298,41 @@ std::vector<std::filesystem::path> reference_snapshot_files() {
     return files;
 }
 
+namespace {
+/// Throws unless every index is below `limit`, or is -1 when `permit_absent`
+void validate_indices(
+    std::span<const std::int32_t> indices,
+    std::size_t limit,
+    const char* name,
+    bool permit_absent = false
+) {
+    if (!std::ranges::all_of(indices, [&](auto value) {
+        return (permit_absent && value == -1) || (value >= 0 && std::size_t(value) < limit);
+    })) {
+        throw std::runtime_error(std::string(name) + ": index outside captured collection");
+    }
+}
+/// Throws unless `offsets` delimit `rows` rows of `values` and every value is below `limit`
+void validate_csr(
+    std::span<const std::int32_t> offsets,
+    std::span<const std::int32_t> values,
+    std::size_t rows,
+    std::size_t limit,
+    const char* name
+) {
+    if (offsets.size() != rows + 1 || offsets.front() != 0 || offsets.back() < 0
+        || std::size_t(offsets.back()) != values.size() || !std::ranges::is_sorted(offsets)) {
+        throw std::runtime_error(std::string(name) + ": invalid CSR offsets");
+    }
+    validate_indices(values, limit, name);
+}
+void validate_finite(std::span<const float> values, const char* name) {
+    if (!std::ranges::all_of(values, [](float value) { return std::isfinite(value); })) {
+        throw std::runtime_error(std::string(name) + ": nonfinite replay value");
+    }
+}
+} // namespace
+
 void fill_level(
     const ReferenceSnapshot& snapshot,
     std::uint32_t level,
@@ -386,8 +361,9 @@ void fill_level(
     buffers.xy = xy.as<std::int32_t>();
     buffers.gradients = gradients.as<float>();
     buffers.n = static_cast<std::uint32_t>(xy.shape[0]);
+    validate_finite(buffers.gradients, "edge point gradients");
 
-    // The edge map is not captured; restore it from the reference's canonical coordinates
+    // The edge map is not captured, so restore it from the reference's canonical coordinates
     buffers.edge_map.setTo(-1);
     for (std::uint32_t index = 0; index < buffers.n; ++index) {
         const auto x = buffers.xy[2 * index];
@@ -395,6 +371,9 @@ void fill_level(
         if (x < 0 || y < 0 || static_cast<std::uint32_t>(x) >= buffers.width
             || static_cast<std::uint32_t>(y) >= buffers.height) {
             throw std::runtime_error("edge_points: coordinate outside the pyramid level");
+        }
+        if (buffers.edge_map(y, x) != -1) {
+            throw std::runtime_error("edge_points: duplicate coordinate");
         }
         buffers.edge_map(y, x) = static_cast<std::int32_t>(index);
     }
@@ -405,10 +384,32 @@ void fill_level(
     buffers.voters_offsets =
         snapshot.tensor(Stage::vote, level, "voters/offsets").as<std::int32_t>();
     buffers.voters_values = snapshot.tensor(Stage::vote, level, "voters/values").as<std::int32_t>();
+    if (snapshot.metadata().contains("replay_version")) {
+        const auto prefix = "replay/vote/level" + std::to_string(level) + "/";
+        buffers.voters_offsets = snapshot.tensor(prefix + "voter_offsets").as<std::int32_t>();
+        buffers.voters_values = snapshot.tensor(prefix + "voter_values").as<std::int32_t>();
+    }
     buffers.is_max = snapshot.tensor(Stage::vote, level, "is_max").as<std::int32_t>();
     buffers.flow_length = snapshot.tensor(Stage::vote, level, "flow_length").as<float>();
     buffers.seeds = snapshot.tensor(Stage::vote, level, "seeds").as<std::int32_t>();
     buffers.seed_order = snapshot.tensor(Stage::vote, level, "seed_order").as<std::int32_t>();
+    if (buffers.links.size() != 2 * std::size_t(buffers.n) || buffers.is_max.size() != buffers.n
+        || buffers.flow_length.size() != buffers.n) {
+        throw std::runtime_error("vote: replay row count differs from edge points");
+    }
+    validate_indices(buffers.links, buffers.n, "vote links", true);
+    validate_csr(buffers.voters_offsets, buffers.voters_values, buffers.n, buffers.n, "voters");
+    validate_indices(buffers.seeds, buffers.n, "vote seeds");
+    validate_indices(buffers.seed_order, buffers.n, "vote seed order");
+    auto ordered_seeds = buffers.seed_order;
+    auto seed_set = buffers.seeds;
+    std::ranges::sort(ordered_seeds);
+    std::ranges::sort(seed_set);
+    if (ordered_seeds != seed_set
+        || std::adjacent_find(seed_set.begin(), seed_set.end()) != seed_set.end()) {
+        throw std::runtime_error("vote: seed order must be a permutation of unique seeds");
+    }
+    validate_finite(buffers.flow_length, "vote flow length");
     if (upto == Stage::vote) {
         return;
     }
@@ -420,7 +421,53 @@ void fill_level(
     buffers.child_counts =
         snapshot.tensor(Stage::linking, level, "child_counts").as<std::int32_t>();
     buffers.avg_vote = snapshot.tensor(Stage::linking, level, "avg_vote").as<float>();
-    // Rebuild the unstored children and candidate order from reference segments and votes
+    const auto segment_count = buffers.link_seeds.size();
+    validate_indices(buffers.link_seeds, buffers.n, "linking seeds");
+    validate_csr(
+        buffers.segment_offsets,
+        buffers.segment_values,
+        segment_count,
+        buffers.n,
+        "linking segments"
+    );
+    if (buffers.child_counts.size() != segment_count || buffers.avg_vote.size() != segment_count
+        || !std::ranges::all_of(buffers.child_counts, [](auto value) { return value >= 0; })) {
+        throw std::runtime_error("linking: invalid replay row counts");
+    }
+    validate_finite(buffers.avg_vote, "linking average vote");
+    if (snapshot.metadata().contains("replay_version")) {
+        const auto prefix = "replay/linking/level" + std::to_string(level) + "/";
+        buffers.children_offsets = snapshot.tensor(prefix + "child_offsets").as<std::int32_t>();
+        buffers.children_values = snapshot.tensor(prefix + "child_values").as<std::int32_t>();
+        buffers.loop_one_order = snapshot.tensor(prefix + "order").as<std::int32_t>();
+        if (buffers.children_offsets.size() != buffers.link_seeds.size() + 1
+            || buffers.loop_one_order.size() != buffers.link_seeds.size()) {
+            throw std::runtime_error("linking replay row count differs from captured segments");
+        }
+        validate_csr(
+            buffers.children_offsets,
+            buffers.children_values,
+            segment_count,
+            buffers.n,
+            "linking children"
+        );
+        validate_indices(buffers.loop_one_order, segment_count, "linking order");
+        auto order = buffers.loop_one_order;
+        std::ranges::sort(order);
+        if (std::adjacent_find(order.begin(), order.end()) != order.end()) {
+            throw std::runtime_error("linking replay order is not a permutation");
+        }
+        for (std::size_t i = 0; i < segment_count; ++i) {
+            if (buffers.child_counts[i]
+                != buffers.children_offsets[i + 1] - buffers.children_offsets[i]) {
+                throw std::runtime_error(
+                    "linking replay child count differs from ordered children"
+                );
+            }
+        }
+        return;
+    }
+    // Without replay tensors, rebuild the children and candidate order from segments and votes
     const auto count = buffers.link_seeds.size();
     buffers.children_offsets.assign(1, 0);
     buffers.children_values.clear();
@@ -476,7 +523,7 @@ void fill_level(
 }
 
 void fill_context(const ReferenceSnapshot& snapshot, Stage upto, Context<cpu::Backend>& context) {
-    const cctag::Parameters params(snapshot.crowns());
+    const cctag::Parameters params = reference_parameters(snapshot);
     context.ensure(snapshot.image_width(), snapshot.image_height(), params);
     if (context.levels.size() != snapshot.processed_levels()) {
         throw std::runtime_error(
@@ -490,163 +537,168 @@ void fill_context(const ReferenceSnapshot& snapshot, Stage upto, Context<cpu::Ba
     }
 }
 
-std::string describe(const Tensor& reference, const Mismatch& mismatch) {
-    std::ostringstream out;
-    out << reference.name << ": " << mismatch.count << " of " << mismatch.total
-        << " elements differ";
-    if (!mismatch.exact()) {
-        out << ", first at index " << mismatch.first;
-        if (reference.shape.size() == 2 && reference.shape[1] != 0) {
-            out << " (y " << mismatch.first / reference.shape[1] << ", x "
-                << mismatch.first % reference.shape[1] << ")";
-        }
+cctag::Parameters reference_parameters(const ReferenceSnapshot& snapshot) {
+    cctag::Parameters params(snapshot.crowns());
+    if (!snapshot.metadata().contains("replay_version")) {
+        return params;
     }
-    return out.str();
-}
-
-CandidateComparison
-compare_candidates(CandidatesHost reference_view, CandidatesHost candidate_view) {
-    const auto reference = candidate_rows(reference_view);
-    const auto candidate = candidate_rows(candidate_view);
-    CandidateComparison result;
-    std::vector<std::tuple<float, std::size_t, std::size_t>> distances;
-    for (std::size_t i = 0; i < reference.size(); ++i) {
-        for (std::size_t j = 0; j < candidate.size(); ++j) {
-            distances.emplace_back(center_distance(reference[i], candidate[j]), i, j);
-        }
+    if (snapshot.meta("replay_version") != "1" || snapshot.meta("semantic_params_version") != "1") {
+        throw std::runtime_error("unsupported CUDA replay schema");
     }
-    std::sort(distances.begin(), distances.end());
-    std::vector<bool> matched_reference(reference.size()), matched_candidate(candidate.size());
-    for (const auto& [distance, i, j] : distances) {
-        if (distance > 5.f || matched_reference[i] || matched_candidate[j]) {
-            continue;
-        }
-        matched_reference[i] = matched_candidate[j] = true;
-        const auto& left = reference[i].ellipse;
-        const auto& right = candidate[j].ellipse;
-        result.center_drift = std::max(result.center_drift, distance);
-        result.pairs_passed &= distance <= 1.f;
-        for (int axis : {2, 3}) {
-            const float drift = std::abs(left[axis] - right[axis]);
-            result.axis_drift = std::max(result.axis_drift, drift);
-            result.pairs_passed &= drift <= 3.f || drift / std::abs(left[axis]) <= 0.05f;
-        }
-        if (left[2] != 0 && left[3] / left[2] > 1.1f) {
-            const float angle =
-                std::abs(std::remainder(left[4] - right[4], std::numbers::pi_v<float>));
-            result.angle_drift = std::max(result.angle_drift, angle);
-            result.pairs_passed &= angle <= 0.05f;
-        }
-    }
-    for (std::size_t i = 0; i < reference.size(); ++i) {
-        if (!matched_reference[i]) {
-            result.unmatched_reference.push_back(reference[i].index);
-        }
-    }
-    result.extra = std::count(matched_candidate.begin(), matched_candidate.end(), false);
-    result.passed = result.pairs_passed && result.unmatched_reference.empty();
-    return result;
-}
-
-std::string describe(const CandidateComparison& comparison) {
-    std::ostringstream out;
-    out << "candidates: " << comparison.unmatched_reference.size() << " unmatched reference rows, "
-        << comparison.extra << " extra rows; worst drift: center " << comparison.center_drift
-        << " px, axis " << comparison.axis_drift << " px, angle " << comparison.angle_drift
-        << " rad";
-    return out.str();
-}
-
-std::string snapshot_hash(const ReferenceSnapshot& snapshot) {
-    using Digest = std::unique_ptr<EVP_MD_CTX, decltype(&EVP_MD_CTX_free)>;
-    auto digest = [] {
-        Digest result(EVP_MD_CTX_new(), EVP_MD_CTX_free);
-        if (!result || EVP_DigestInit_ex(result.get(), EVP_sha256(), nullptr) != 1) {
-            throw std::runtime_error("cannot initialize SHA-256");
-        }
-        return result;
-    };
-    auto update = [](const Digest& hash, const void* data, std::size_t size) {
-        if (EVP_DigestUpdate(hash.get(), data, size) != 1) {
-            throw std::runtime_error("cannot update SHA-256");
-        }
-    };
-    auto finish = [](const Digest& hash) {
-        std::array<unsigned char, 32> bytes;
-        if (EVP_DigestFinal_ex(hash.get(), bytes.data(), nullptr) != 1) {
-            throw std::runtime_error("cannot finish SHA-256");
-        }
-        return bytes;
-    };
-    auto hash = digest();
-    const auto& stages = snapshot.meta("stages");
-    update(hash, stages.data(), stages.size());
-    for (const auto* name : kStageNames) {
-        const Stage stage = *parse_stage(name);
-        if (!snapshot.has(stage)) {
-            continue;
-        }
-        auto stage_hash = digest();
-        for (const auto& [key, tensor] : snapshot.tensors()) {
-            if (!key.starts_with(std::string(name) + "/")) {
-                continue;
+    const auto values = boost::json::parse(snapshot.meta("effective_parameters")).as_object();
+    const auto field = [&]<class T>(const char* name, T& target) {
+        if constexpr (std::is_same_v<T, bool>) {
+            const int value = boost::json::value_to<int>(values.at(name));
+            if (value != 0 && value != 1) {
+                throw std::runtime_error("invalid boolean replay parameter");
             }
-            update(stage_hash, key.c_str(), key.size() + 1);
-            const std::string dtype = dtype_name(tensor.dtype);
-            update(stage_hash, dtype.c_str(), dtype.size() + 1);
-            for (const auto dimension : tensor.shape) {
-                std::array<std::uint8_t, 8> bytes;
-                for (int i = 0; i < 8; ++i) {
-                    bytes[i] = static_cast<std::uint8_t>(dimension >> (8 * i));
-                }
-                update(stage_hash, bytes.data(), bytes.size());
-            }
-            update(stage_hash, "", 1);
-            update(stage_hash, tensor.bytes.data(), tensor.bytes.size());
+            target = value;
+        } else {
+            target = boost::json::value_to<T>(values.at(name));
         }
-        const auto bytes = finish(stage_hash);
-        update(hash, bytes.data(), bytes.size());
-    }
-    std::string result = "sha256:";
-    for (const auto byte : finish(hash)) {
-        result += "0123456789abcdef"[byte >> 4];
-        result += "0123456789abcdef"[byte & 15];
-    }
-    return result;
-}
-
-CandidateAllowance CandidateAllowance::read(const std::filesystem::path& file) {
-    std::ifstream input(file);
-    if (!input) {
-        throw std::runtime_error("cannot read candidate allowance: " + file.string());
-    }
-    const std::string text{std::istreambuf_iterator<char>(input), {}};
-    const auto value = boost::json::parse(text);
-    const auto& object = value.as_object();
-    return {
-        boost::json::value_to<std::string>(object.at("variant")),
-        boost::json::value_to<std::string>(object.at("snapshot_hash")),
-        boost::json::value_to<std::size_t>(object.at("row")),
-        boost::json::value_to<std::int32_t>(object.at("level")),
-        boost::json::value_to<std::array<float, 5>>(object.at("ellipse")),
-        boost::json::value_to<std::string>(object.at("reason")),
     };
+#define P(name) field(#name, params.name)
+    P(_cannyThrLow);
+    P(_cannyThrHigh);
+    P(_distSearch);
+    P(_thrGradientMagInVote);
+    P(_angleVoting);
+    P(_ratioVoting);
+    P(_averageVoteMin);
+    P(_thrMedianDistanceEllipse);
+    P(_maximumNbSeeds);
+    P(_maximumNbCandidatesLoopTwo);
+    P(_nCrowns);
+    P(_nCircles);
+    P(_minPointsSegmentCandidate);
+    P(_minVotesToSelectCandidate);
+    P(_threshRobustEstimationOfOuterEllipse);
+    P(_ellipseGrowingEllipticHullWidth);
+    P(_windowSizeOnInnerEllipticSegment);
+    P(_numberOfMultiresLayers);
+    P(_numberOfProcessedMultiresLayers);
+    P(_nSamplesOuterEllipse);
+    P(_numCutsInIdentStep);
+    P(_numSamplesOuterEdgePointsRefinement);
+    P(_cutsSelectionTrials);
+    P(_sampleCutLength);
+    P(_imagedCenterNGridSample);
+    P(_imagedCenterNeighbourSize);
+    P(_minIdentProba);
+    P(_useLMDif);
+    P(_searchForAnotherSegment);
+    P(_writeOutput);
+    P(_doIdentification);
+    P(_maxEdges);
+    P(_useCuda);
+    P(_pinnedCounters);
+    P(_pinnedNearbyPoints);
+#undef P
+    params._debugDir = snapshot.meta("debug_dir");
+    if (params._numberOfProcessedMultiresLayers != snapshot.processed_levels()
+        || params._nCrowns != snapshot.crowns()) {
+        throw std::runtime_error("replay parameter identity differs");
+    }
+    return params;
 }
 
-bool CandidateAllowance::allows(
-    const ReferenceSnapshot& reference,
-    const CandidateComparison& comparison,
-    std::string_view candidate_variant
-) const {
-    if (candidate_variant != variant || !comparison.pairs_passed || comparison.extra != 0
-        || comparison.unmatched_reference != std::vector<std::size_t>{row}
-        || test::snapshot_hash(reference) != snapshot_hash) {
-        return false;
+void fill_identification(const ReferenceSnapshot& snapshot, Context<cpu::Backend>& context) {
+    fill_context(snapshot, Stage::pyramid, context);
+    if (snapshot.meta("replay_version") != "1") {
+        throw std::runtime_error("identification requires replay version 1");
     }
-    const auto levels = reference.tensor("candidates/level").as<std::int32_t>();
-    const auto ellipses = reference.tensor("candidates/ellipse").as<float>();
-    return row < levels.size() && levels[row] == level && row < ellipses.size() / 5
-        && std::equal(ellipse.begin(), ellipse.end(), ellipses.begin() + 5 * row);
+    const std::string prefix = "replay/identification/";
+    const auto floats = [&](const char* name, std::size_t rows, std::size_t columns) {
+        const auto& tensor = snapshot.tensor(prefix + name);
+        if (tensor.shape != std::vector<std::uint64_t>{rows, columns}) {
+            throw std::runtime_error("invalid identification replay shape: " + tensor.name);
+        }
+        auto values = tensor.as<float>();
+        if (!std::ranges::all_of(values, [](float value) { return std::isfinite(value); })) {
+            throw std::runtime_error("nonfinite identification replay: " + tensor.name);
+        }
+        return values;
+    };
+    const auto& centers_tensor = snapshot.tensor(prefix + "centers");
+    if (centers_tensor.shape.size() != 2) {
+        throw std::runtime_error("invalid replay centers");
+    }
+    const std::size_t count = centers_tensor.shape[0];
+    const auto centers = floats("centers", count, 2), ellipse = floats("ellipse", count, 5),
+               conics = floats("ellipse_matrix", count, 9),
+               homographies = floats("homography", count, 9), scales = floats("scale", count, 1),
+               qualities = floats("quality", count, 1);
+    const auto ints = [&](const char* name, std::size_t rows) {
+        const auto& tensor = snapshot.tensor(prefix + name);
+        if (tensor.shape != std::vector<std::uint64_t>{rows}) {
+            throw std::runtime_error("invalid replay integer shape");
+        }
+        return tensor.as<std::int32_t>();
+    };
+    const auto levels = ints("level", count), ids = ints("id", count),
+               statuses = ints("status", count), offsets = ints("point_offsets", count + 1);
+    const auto& points_tensor = snapshot.tensor(prefix + "directed_points");
+    if (points_tensor.shape.size() != 2) {
+        throw std::runtime_error("invalid replay points");
+    }
+    const auto points = floats("directed_points", points_tensor.shape[0], 4);
+    if (offsets.front() != 0 || offsets.back() < 0
+        || std::size_t(offsets.back()) != points.size() / 4 || !std::ranges::is_sorted(offsets)) {
+        throw std::runtime_error("invalid replay point offsets");
+    }
+    context.candidate_markers.clear();
+    for (std::size_t i = 0; i < count; ++i) {
+        CandidateMarker candidate;
+        candidate.center = {centers[2 * i], centers[2 * i + 1]};
+        candidate.level = levels[i];
+        candidate.id = ids[i];
+        candidate.status = statuses[i];
+        candidate.scale = scales[i];
+        candidate.quality = qualities[i];
+        if (candidate.level < 0 || std::size_t(candidate.level) >= context.levels.size()
+            || candidate.scale <= 0
+            || !candidate.rescaled_outer_ellipse.set_parameters(
+                ellipse[5 * i],
+                ellipse[5 * i + 1],
+                ellipse[5 * i + 2],
+                ellipse[5 * i + 3],
+                ellipse[5 * i + 4]
+            )) {
+            throw std::runtime_error("invalid replay candidate geometry");
+        }
+        for (int row = 0; row < 3; ++row) {
+            for (int col = 0; col < 3; ++col) {
+                candidate.rescaled_outer_ellipse.conic(row, col) = conics[9 * i + 3 * row + col];
+                candidate.homography(row, col) = homographies[9 * i + 3 * row + col];
+            }
+        }
+        for (auto j = offsets[i]; j < offsets[i + 1]; ++j) {
+            candidate.outer_points.push_back(
+                {points[4 * j], points[4 * j + 1], points[4 * j + 2], points[4 * j + 3]}
+            );
+        }
+        context.candidate_markers.push_back(candidate);
+    }
+    auto bank_offsets = snapshot.tensor(prefix + "bank_offsets").as<std::int32_t>();
+    auto bank_values = snapshot.tensor(prefix + "bank_values").as<float>();
+    if (bank_offsets.size() < 2 || bank_offsets.front() != 0 || bank_offsets.back() < 0
+        || std::size_t(bank_offsets.back()) != bank_values.size()
+        || !std::ranges::is_sorted(bank_offsets)) {
+        throw std::runtime_error("invalid replay bank offsets");
+    }
+    for (std::size_t i = 1; i < bank_offsets.size(); ++i) {
+        if (bank_offsets[i] - bank_offsets[i - 1] != 2 * snapshot.crowns() - 1) {
+            throw std::runtime_error("invalid replay bank width");
+        }
+    }
+    if (!std::ranges::all_of(bank_values, [](float value) {
+        return std::isfinite(value) && value > 0;
+    })) {
+        throw std::runtime_error("invalid replay bank ratios");
+    }
+    context.bank.custom = true;
+    context.bank.ratios = std::move(bank_values);
+    context.bank.offsets.assign(bank_offsets.begin(), bank_offsets.end());
 }
 
 } // namespace cctag::portable::test
@@ -655,7 +707,6 @@ bool CandidateAllowance::allows(
 #include <boost/ut.hpp>
 
 #include <cstdint>
-#include <limits>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -679,27 +730,85 @@ std::vector<std::uint8_t> safetensors(std::string header, const std::vector<std:
     return bytes;
 }
 
-struct CandidateFixture {
-    std::vector<float> ellipses;
-    std::vector<std::int32_t> levels;
-    std::vector<float> quality;
+/// Builds a snapshot from named tensors, laying out the header and byte offsets itself.
+/// The parser tests use hand-built bytes instead, so a layout error here cannot hide there.
+struct SnapshotBuilder {
+    // A stage snapshot must have metadata
+    boost::json::object metadata{{"problem", "test"}};
+    std::map<std::string, std::pair<boost::json::object, std::vector<std::uint8_t>>> tensors;
 
-    CandidateFixture(std::initializer_list<CandidateRow> rows) {
-        for (const auto& row : rows) {
-            ellipses.insert(ellipses.end(), row.ellipse.begin(), row.ellipse.end());
-            levels.push_back(row.level);
-            quality.push_back(row.quality);
+    template <class T>
+    SnapshotBuilder&
+    add(const std::string& name, std::vector<std::uint64_t> shape, const std::vector<T>& values) {
+        std::vector<std::uint8_t> bytes(values.size() * sizeof(T));
+        if (!values.empty()) {
+            std::memcpy(bytes.data(), values.data(), bytes.size());
         }
+        tensors[name] = {
+            {{"dtype", dtype_name(dtype_of<T>())},
+             {"shape", boost::json::array(shape.begin(), shape.end())}},
+            std::move(bytes)
+        };
+        return *this;
     }
 
-    CandidatesHost view() const {
-        return {static_cast<std::uint32_t>(levels.size()), ellipses, levels, quality};
+    /// Adds the four planes of a `width` by 1 level 0, with every pixel marked as an edge
+    SnapshotBuilder& edge_row(std::uint64_t width) {
+        add<std::uint8_t>("pyramid/level0/src", {1, width}, std::vector<std::uint8_t>(width));
+        add<std::int16_t>("gradient/level0/dx", {1, width}, std::vector<std::int16_t>(width));
+        add<std::int16_t>("gradient/level0/dy", {1, width}, std::vector<std::int16_t>(width));
+        return add<std::uint8_t>(
+            "edges/level0/edges",
+            {1, width},
+            std::vector<std::uint8_t>(width, 255)
+        );
+    }
+
+    ReferenceSnapshot build() const {
+        boost::json::object header{{"__metadata__", metadata}};
+        std::vector<std::uint8_t> data;
+        for (const auto& [name, tensor] : tensors) {
+            auto entry = tensor.first;
+            entry["data_offsets"] = {data.size(), data.size() + tensor.second.size()};
+            header[name] = entry;
+            data.insert(data.end(), tensor.second.begin(), tensor.second.end());
+        }
+        return ReferenceSnapshot::from_bytes(safetensors(boost::json::serialize(header), data));
     }
 };
 
-CandidateComparison compare_one(std::array<float, 5> reference, std::array<float, 5> candidate) {
-    const CandidateFixture left{{reference, 0, 1.f}}, right{{candidate, 0, 1.f}};
-    return compare_candidates(left.view(), right.view());
+/// Two edge points with hand-chosen vote and linking outputs. The vote and linking orders
+/// deliberately differ from index order, so a fill that sorts or rebuilds them is caught.
+SnapshotBuilder two_point_linking() {
+    SnapshotBuilder snapshot;
+    snapshot.edge_row(2)
+        .add<std::int32_t>("edge_points/level0/xy", {2, 2}, {0, 0, 1, 0})
+        .add<float>("edge_points/level0/gradients", {2, 2}, {0, 0, 0, 0})
+        .add<std::int32_t>("vote/level0/links", {2, 2}, {-1, 1, 0, -1})
+        .add<std::int32_t>("vote/level0/voters/offsets", {3}, {0, 1, 2})
+        .add<std::int32_t>("vote/level0/voters/values", {2}, {1, 0})
+        .add<std::int32_t>("vote/level0/is_max", {2}, {1, 1})
+        .add<float>("vote/level0/flow_length", {2}, {1.5f, 2.5f})
+        .add<std::int32_t>("vote/level0/seeds", {2}, {0, 1})
+        .add<std::int32_t>("vote/level0/seed_order", {2}, {1, 0})
+        .add<std::int32_t>("linking/level0/seeds", {1}, {1})
+        .add<std::int32_t>("linking/level0/segments/offsets", {2}, {0, 2})
+        .add<std::int32_t>("linking/level0/segments/values", {2}, {1, 0})
+        .add<std::int32_t>("linking/level0/child_counts", {1}, {2})
+        .add<float>("linking/level0/avg_vote", {1}, {2.f});
+    return snapshot;
+}
+
+/// Adds replay tensors whose voter order differs from the canonical `voters/values`
+SnapshotBuilder two_point_replay() {
+    SnapshotBuilder snapshot = two_point_linking();
+    snapshot.metadata["replay_version"] = "1";
+    snapshot.add<std::int32_t>("replay/vote/level0/voter_offsets", {3}, {0, 1, 2})
+        .add<std::int32_t>("replay/vote/level0/voter_values", {2}, {0, 1})
+        .add<std::int32_t>("replay/linking/level0/child_offsets", {2}, {0, 2})
+        .add<std::int32_t>("replay/linking/level0/child_values", {2}, {1, 0})
+        .add<std::int32_t>("replay/linking/level0/order", {1}, {0});
+    return snapshot;
 }
 
 } // namespace
@@ -707,166 +816,6 @@ CandidateComparison compare_one(std::array<float, 5> reference, std::array<float
 using namespace boost::ut;
 
 inline suite<"snapshot_support"> snapshot_support_suite = [] {
-    "snapshot content hash excludes metadata and follows the canonical byte contract"_test = [] {
-        const std::string header =
-            R"({"pyramid/level0/src":{"dtype":"U8","shape":[1,3],"data_offsets":[0,3]},)"
-            R"("__metadata__":{"stages":"pyramid","problem":"test"}})";
-        const auto snapshot = ReferenceSnapshot::from_bytes(safetensors(header, {1, 2, 3}));
-        expect(eq(
-            snapshot_hash(snapshot),
-            std::string{"sha256:5ed943897df4f73004d2f3bc1d304280805dd0b89db1ba7c19fb33ff9fc5d972"}
-        ));
-        auto renamed = header;
-        renamed.replace(renamed.find("test"), 4, "renamed");
-        expect(
-            eq(snapshot_hash(snapshot),
-               snapshot_hash(ReferenceSnapshot::from_bytes(safetensors(renamed, {1, 2, 3}))))
-        );
-        expect(
-            snapshot_hash(snapshot)
-            != snapshot_hash(ReferenceSnapshot::from_bytes(safetensors(header, {1, 2, 4})))
-        );
-    };
-
-    "candidate allowance accepts only its missing raw row and preserves other failures"_test = [] {
-        const CandidateFixture reference{{{100, 0, 1, 2, 0}, 1, 1}, {{0, 0, 1, 2, 0}, 0, 1}};
-        const CandidateFixture candidate{{{0, 0, 1, 2, 0}, 0, 1}};
-        const std::string header =
-            R"({"candidates/ellipse":{"dtype":"F32","shape":[2,5],"data_offsets":[0,40]},)"
-            R"("candidates/level":{"dtype":"I32","shape":[2],"data_offsets":[40,48]},)"
-            R"("candidates/quality":{"dtype":"F32","shape":[2],"data_offsets":[48,56]},)"
-            R"("__metadata__":{"stages":"candidates"}})";
-        std::vector<std::uint8_t> data(56);
-        std::memcpy(data.data(), reference.ellipses.data(), 40);
-        std::memcpy(data.data() + 40, reference.levels.data(), 8);
-        std::memcpy(data.data() + 48, reference.quality.data(), 8);
-        const auto snapshot = ReferenceSnapshot::from_bytes(safetensors(header, data));
-        const CandidateAllowance
-            allowance{"test/cpu", snapshot_hash(snapshot), 0, 1, {100, 0, 1, 2, 0}, "reviewed"};
-        const auto comparison = compare_candidates(reference.view(), candidate.view());
-        expect(!comparison.passed);
-        expect(comparison.unmatched_reference == std::vector<std::size_t>{0});
-        expect(allowance.allows(snapshot, comparison, "test/cpu"));
-        expect(!comparison.passed); // Acceptance never changes the raw verdict
-        expect(!allowance.allows(snapshot, comparison, "another/cpu"));
-        for (int changed = 0; changed < 4; ++changed) {
-            auto stale = allowance;
-            if (changed == 0) {
-                stale.snapshot_hash += "0";
-            }
-            if (changed == 1) {
-                stale.row = 1;
-            }
-            if (changed == 2) {
-                stale.level = 0;
-            }
-            if (changed == 3) {
-                stale.ellipse[0] += 1;
-            }
-            expect(!stale.allows(snapshot, comparison, "test/cpu"));
-        }
-        data[55] ^= 1; // Even an unrelated tensor change invalidates the snapshot pin
-        const auto moved = ReferenceSnapshot::from_bytes(safetensors(header, data));
-        expect(!allowance.allows(moved, comparison, "test/cpu"));
-        for (const CandidateFixture& bad : {
-                 CandidateFixture{},
-                 CandidateFixture{{{100, 0, 1, 2, 0}, 1, 1}},
-                 CandidateFixture{{{2, 0, 1, 2, 0}, 0, 1}},
-                 CandidateFixture{{{0, 0, 1, 6, 0}, 0, 1}},
-                 CandidateFixture{{{0, 0, 1, 2, 0}, 0, 1}, {{200, 0, 1, 2, 0}, 0, 1}},
-             }) {
-            expect(!allowance.allows(
-                snapshot,
-                compare_candidates(reference.view(), bad.view()),
-                "test/cpu"
-            ));
-        }
-    };
-
-    "candidate matching keeps the highest quality duplicate and allows extra rows"_test = [] {
-        const CandidateFixture reference{{{0, 0, 10, 20, 0}, 0, 5}};
-        const CandidateFixture candidate{
-            {{4, 0, 6, 12, 1}, 1, 1},
-            {{100, 0, 10, 20, 0}, 0, 1},
-            {{0, 0, 10, 20, 0}, 2, 5},
-        };
-        const auto comparison = compare_candidates(reference.view(), candidate.view());
-        expect(comparison.passed);
-        expect(eq(comparison.unmatched_reference.size(), 0u));
-        expect(eq(comparison.extra, 1u));
-        expect(eq(comparison.center_drift, 0.f));
-    };
-
-    "candidate matching is one to one and requires every reference representative"_test = [] {
-        const CandidateFixture reference{{{0, 0, 1, 1, 0}, 0, 1}, {{1, 0, 1, 1, 0}, 0, 1}};
-        const CandidateFixture candidate{{{0.5f, 0, 1, 1, 0}, 0, 1}};
-        const auto comparison = compare_candidates(reference.view(), candidate.view());
-        expect(!comparison.passed);
-        expect(eq(comparison.unmatched_reference.size(), 1u));
-        expect(eq(comparison.extra, 0u));
-        const CandidateFixture empty{};
-        expect(!compare_candidates(reference.view(), empty.view()).passed);
-        expect(compare_candidates(empty.view(), candidate.view()).passed);
-    };
-
-    "candidate matching distinguishes center tolerance from the pairing radius"_test = [] {
-        const std::array<float, 5> reference{0, 0, 10, 20, 0};
-        expect(compare_one(reference, {1, 0, 10, 20, 0}).passed);
-        expect(!compare_one(reference, {1.01f, 0, 10, 20, 0}).passed);
-        const auto paired = compare_one(reference, {5, 0, 10, 20, 0});
-        expect(!paired.passed);
-        expect(eq(paired.unmatched_reference.size(), 0u));
-        const auto outside = compare_one(reference, {5.01f, 0, 10, 20, 0});
-        expect(!outside.passed);
-        expect(eq(outside.unmatched_reference.size(), 1u));
-        expect(eq(outside.extra, 1u));
-    };
-
-    "candidate axes accept either absolute or relative tolerance"_test = [] {
-        for (const int axis : {2, 3}) {
-            std::array<float, 5> reference{0, 0, 10, 20, 0};
-            auto candidate = reference;
-            candidate[axis] += 3.f;
-            expect(compare_one(reference, candidate).passed);
-            candidate[axis] += 0.01f;
-            expect(!compare_one(reference, candidate).passed);
-            reference[axis] = 100.f;
-            candidate = reference;
-            candidate[axis] = 105.f;
-            expect(compare_one(reference, candidate).passed);
-            candidate[axis] = 105.01f;
-            expect(!compare_one(reference, candidate).passed);
-        }
-    };
-
-    "candidate angles wrap modulo pi and ignore nearly circular reference ellipses"_test = [] {
-        const std::array<float, 5> reference{0, 0, 10, 20, 0};
-        expect(compare_one(reference, {0, 0, 10, 20, 0.05f}).passed);
-        expect(!compare_one(reference, {0, 0, 10, 20, 0.0501f}).passed);
-        expect(compare_one(reference, {0, 0, 10, 20, std::numbers::pi_v<float>}).passed);
-        expect(compare_one({0, 0, 10, 11, 0}, {0, 0, 10, 11, 1}).passed);
-        expect(!compare_one({0, 0, 10, 11.01f, 0}, {0, 0, 10, 11.01f, 1}).passed);
-    };
-
-    "candidate matching rejects malformed rows and non-finite values"_test = [] {
-        const CandidateFixture reference{{{0, 0, 10, 20, 0}, 0, 1}};
-        auto malformed = reference.view();
-        malformed.ellipses = malformed.ellipses.first(4);
-        expect(throws<std::runtime_error>([&] {
-            (void)compare_candidates(reference.view(), malformed);
-        }));
-        CandidateFixture nonfinite = reference;
-        nonfinite.quality[0] = std::numeric_limits<float>::quiet_NaN();
-        expect(throws<std::runtime_error>([&] {
-            (void)compare_candidates(reference.view(), nonfinite.view());
-        }));
-        nonfinite = reference;
-        nonfinite.ellipses[0] = std::numeric_limits<float>::infinity();
-        expect(throws<std::runtime_error>([&] {
-            (void)compare_candidates(nonfinite.view(), reference.view());
-        }));
-    };
-
     "reads metadata and unaligned tensor values from hand built bytes"_test = [] {
         // Place the I16 plane at an odd byte offset to check reading unaligned values
         const std::string header =
@@ -905,91 +854,96 @@ inline suite<"snapshot_support"> snapshot_support_suite = [] {
     };
 
     "rejects tensor byte counts that disagree with shape or exceed the file"_test = [] {
-        const std::string header =
-            R"({"pyramid/level0/src":{"dtype":"U8","shape":[2,3],"data_offsets":[0,5]},"__metadata__":{}})";
+        const auto snapshot = [](const char* offsets, std::size_t data_size) {
+            const std::string header = std::string(R"({"src":{"dtype":"U8","shape":[2,3],)")
+                + R"("data_offsets":)" + offsets + R"(},"__metadata__":{"problem":"test"}})";
+            return ReferenceSnapshot::from_bytes(
+                safetensors(header, std::vector<std::uint8_t>(data_size))
+            );
+        };
+        // Six bytes for a 2x3 U8 tensor is valid, so the cases below fail only on their bytes
+        expect(nothrow([&] { (void)snapshot("[0,6]", 6); }));
+        expect(throws<std::runtime_error>([&] { (void)snapshot("[0,5]", 6); }));
+        expect(throws<std::runtime_error>([&] { (void)snapshot("[0,6]", 5); }));
+    };
+
+    "fills planes and rejects planes that are missing or the wrong size"_test = [] {
+        SnapshotBuilder builder;
+        builder.add<std::uint8_t>("pyramid/level0/src", {2, 3}, {1, 2, 3, 4, 5, 6})
+            .add<std::int16_t>("gradient/level0/dx", {2, 3}, std::vector<std::int16_t>(6));
+        const ReferenceSnapshot snapshot = builder.build();
+
+        cpu::Buffers buffers;
+        buffers.ensure(3, 2);
+        fill_level(snapshot, 0, Stage::pyramid, buffers);
+        expect(eq(buffers.src(1, 1), 5));
+        // The gradient stage also needs `dy`, which the snapshot lacks
         expect(throws<std::runtime_error>([&] {
-            (void)ReferenceSnapshot::from_bytes(safetensors(header, std::vector<std::uint8_t>(5)));
+            fill_level(snapshot, 0, Stage::gradient, buffers);
         }));
-        const std::string overrun =
-            R"({"pyramid/level0/src":{"dtype":"U8","shape":[2,3],"data_offsets":[0,6]},"__metadata__":{}})";
+
+        cpu::Buffers transposed;
+        transposed.ensure(2, 3);
         expect(throws<std::runtime_error>([&] {
-            (void)ReferenceSnapshot::from_bytes(safetensors(overrun, std::vector<std::uint8_t>(5)));
+            fill_level(snapshot, 0, Stage::pyramid, transposed);
         }));
     };
 
-    "fills edge planes and edge point collections from reference snapshot bytes"_test = [] {
-        const std::string header =
-            R"({"pyramid/level0/src":{"dtype":"U8","shape":[1,2],"data_offsets":[0,2]},)"
-            R"("gradient/level0/dx":{"dtype":"I16","shape":[1,2],"data_offsets":[2,6]},)"
-            R"("gradient/level0/dy":{"dtype":"I16","shape":[1,2],"data_offsets":[6,10]},)"
-            R"("edges/level0/edges":{"dtype":"U8","shape":[1,2],"data_offsets":[10,12]},)"
-            R"("edge_points/level0/xy":{"dtype":"I32","shape":[1,2],"data_offsets":[12,20]},)"
-            R"("edge_points/level0/gradients":{"dtype":"F32","shape":[1,2],"data_offsets":[20,28]},)"
-            R"("__metadata__":{"schema_version":"1"}})";
-        const std::vector<std::uint8_t> data = {3, 4, 0, 0, 0, 0, 0, 0, 0,   0,   0, 255, 1, 0,
-                                                0, 0, 0, 0, 0, 0, 0, 0, 128, 191, 0, 0,   0, 64};
-        const ReferenceSnapshot snapshot = ReferenceSnapshot::from_bytes(safetensors(header, data));
+    "fills edge points from the snapshot and rebuilds the edge map from them"_test = [] {
+        SnapshotBuilder builder;
+        builder.edge_row(2)
+            .add<std::int32_t>("edge_points/level0/xy", {1, 2}, {1, 0})
+            .add<float>("edge_points/level0/gradients", {1, 2}, {-1.f, 2.f});
+        const ReferenceSnapshot snapshot = builder.build();
         cpu::Buffers buffers;
         buffers.ensure(2, 1);
-        fill_level(snapshot, 0, Stage::edges, buffers);
-        expect(eq(buffers.edges(0, 0), 0));
-        expect(eq(buffers.edges(0, 1), 255));
         buffers.edge_map.setTo(7);
         fill_level(snapshot, 0, Stage::edge_points, buffers);
         expect(eq(buffers.n, 1u));
         expect(buffers.xy == std::vector<std::int32_t>{1, 0});
-        // These differ from the gradient planes: the loader must copy, not recompute
+        // The gradient planes are zero, so these values show the gradients were copied
         expect(buffers.gradients == std::vector<float>{-1.f, 2.f});
         expect(eq(buffers.edge_map(0, 0), -1));
         expect(eq(buffers.edge_map(0, 1), 0));
-        expect(throws<std::runtime_error>([&] {
-            (void)fill_level(snapshot, 0, Stage::vote, buffers);
-        }));
+        // The snapshot has no vote tensors
+        expect(throws<std::runtime_error>([&] { fill_level(snapshot, 0, Stage::vote, buffers); }));
+    };
 
-        // Reject coordinates outside either axis before indexing the edge map
-        for (const std::size_t offset : {12u, 16u}) {
-            auto outside = data;
-            outside[offset] = 2;
-            const ReferenceSnapshot invalid =
-                ReferenceSnapshot::from_bytes(safetensors(header, outside));
+    "fill rejects edge point coordinates outside the level"_test = [] {
+        cpu::Buffers buffers;
+        buffers.ensure(2, 1);
+        for (const auto& xy : {std::vector<std::int32_t>{2, 0}, std::vector<std::int32_t>{0, 1}}) {
+            SnapshotBuilder builder;
+            builder.edge_row(2)
+                .add<std::int32_t>("edge_points/level0/xy", {1, 2}, xy)
+                .add<float>("edge_points/level0/gradients", {1, 2}, {0.f, 0.f});
+            const ReferenceSnapshot snapshot = builder.build();
             expect(throws<std::runtime_error>([&] {
-                fill_level(invalid, 0, Stage::edge_points, buffers);
+                fill_level(snapshot, 0, Stage::edge_points, buffers);
             }));
         }
     };
 
+    "fills an empty edge point collection and clears the previous edge map"_test = [] {
+        SnapshotBuilder builder;
+        builder.edge_row(1)
+            .add<std::int32_t>("edge_points/level0/xy", {0, 2}, {})
+            .add<float>("edge_points/level0/gradients", {0, 2}, {});
+        cpu::Buffers buffers;
+        buffers.ensure(1, 1);
+        buffers.n = 1;
+        buffers.xy = {0, 0};
+        buffers.gradients = {1.f, -1.f};
+        buffers.edge_map.setTo(0);
+        fill_level(builder.build(), 0, Stage::edge_points, buffers);
+        expect(eq(buffers.n, 0u));
+        expect(buffers.xy.empty());
+        expect(buffers.gradients.empty());
+        expect(eq(buffers.edge_map(0, 0), -1));
+    };
+
     "fills vote and linking without changing their stored orders"_test = [] {
-        const std::string header =
-            R"({"pyramid/level0/src":{"dtype":"U8","shape":[1,2],"data_offsets":[0,2]},)"
-            R"("gradient/level0/dx":{"dtype":"I16","shape":[1,2],"data_offsets":[2,6]},)"
-            R"("gradient/level0/dy":{"dtype":"I16","shape":[1,2],"data_offsets":[6,10]},)"
-            R"("edges/level0/edges":{"dtype":"U8","shape":[1,2],"data_offsets":[10,12]},)"
-            R"("edge_points/level0/xy":{"dtype":"I32","shape":[2,2],"data_offsets":[12,28]},)"
-            R"("edge_points/level0/gradients":{"dtype":"F32","shape":[2,2],"data_offsets":[28,44]},)"
-            R"("vote/level0/links":{"dtype":"I32","shape":[2,2],"data_offsets":[44,60]},)"
-            R"("vote/level0/voters/offsets":{"dtype":"I32","shape":[3],"data_offsets":[60,72]},)"
-            R"("vote/level0/voters/values":{"dtype":"I32","shape":[2],"data_offsets":[72,80]},)"
-            R"("vote/level0/is_max":{"dtype":"I32","shape":[2],"data_offsets":[80,88]},)"
-            R"("vote/level0/flow_length":{"dtype":"F32","shape":[2],"data_offsets":[88,96]},)"
-            R"("vote/level0/seeds":{"dtype":"I32","shape":[2],"data_offsets":[96,104]},)"
-            R"("vote/level0/seed_order":{"dtype":"I32","shape":[2],"data_offsets":[104,112]},)"
-            R"("linking/level0/seeds":{"dtype":"I32","shape":[1],"data_offsets":[112,116]},)"
-            R"("linking/level0/segments/offsets":{"dtype":"I32","shape":[2],"data_offsets":[116,124]},)"
-            R"("linking/level0/segments/values":{"dtype":"I32","shape":[2],"data_offsets":[124,132]},)"
-            R"("linking/level0/child_counts":{"dtype":"I32","shape":[1],"data_offsets":[132,136]},)"
-            R"("linking/level0/avg_vote":{"dtype":"F32","shape":[1],"data_offsets":[136,140]},)"
-            R"("__metadata__":{"schema_version":"1"}})";
-        std::vector<std::uint8_t> data = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 255, 255};
-        // Hand-built little-endian words: coordinates, gradients, vote and linking tensors
-        for (const std::uint32_t word :
-             {0u,          0u, 1u, 0u, 0u, 0u, 0u, 0u, 0xffffffffu, 1u,          0u,
-              0xffffffffu, 0u, 1u, 2u, 1u, 0u, 1u, 1u, 0x3fc00000u, 0x40200000u, 0u,
-              1u,          1u, 0u, 1u, 0u, 2u, 1u, 0u, 2u,          0x40000000u}) {
-            for (int byte = 0; byte < 4; ++byte) {
-                data.push_back(static_cast<std::uint8_t>(word >> (8 * byte)));
-            }
-        }
-        const ReferenceSnapshot snapshot = ReferenceSnapshot::from_bytes(safetensors(header, data));
+        const ReferenceSnapshot snapshot = two_point_linking().build();
         cpu::Buffers buffers;
         buffers.ensure(2, 1);
         fill_level(snapshot, 0, Stage::vote, buffers);
@@ -1000,6 +954,7 @@ inline suite<"snapshot_support"> snapshot_support_suite = [] {
         expect(buffers.flow_length == std::vector<float>{1.5f, 2.5f});
         expect(buffers.seeds == std::vector<std::int32_t>{0, 1});
         expect(buffers.seed_order == std::vector<std::int32_t>{1, 0});
+
         fill_level(snapshot, 0, Stage::linking, buffers);
         const LinkingHost linking = buffers.linking_view();
         expect(eq(linking.c, 1u));
@@ -1008,70 +963,43 @@ inline suite<"snapshot_support"> snapshot_support_suite = [] {
         expect(std::ranges::equal(linking.segment_values, std::array{1, 0}));
         expect(std::ranges::equal(linking.child_counts, std::array{2}));
         expect(std::ranges::equal(linking.avg_vote, std::array{2.f}));
+    };
+
+    "fill supports stages only through linking"_test = [] {
+        cpu::Buffers buffers;
+        buffers.ensure(2, 1);
         expect(throws<std::logic_error>([&] {
-            fill_level(snapshot, 0, Stage::candidates, buffers);
+            fill_level(two_point_linking().build(), 0, Stage::candidates, buffers);
         }));
     };
 
-    "fills an empty edge point collection and removes the previous edge map"_test = [] {
-        const std::string header =
-            R"({"pyramid/level0/src":{"dtype":"U8","shape":[1,1],"data_offsets":[0,1]},)"
-            R"("gradient/level0/dx":{"dtype":"I16","shape":[1,1],"data_offsets":[1,3]},)"
-            R"("gradient/level0/dy":{"dtype":"I16","shape":[1,1],"data_offsets":[3,5]},)"
-            R"("edges/level0/edges":{"dtype":"U8","shape":[1,1],"data_offsets":[5,6]},)"
-            R"("edge_points/level0/xy":{"dtype":"I32","shape":[0,2],"data_offsets":[6,6]},)"
-            R"("edge_points/level0/gradients":{"dtype":"F32","shape":[0,2],"data_offsets":[6,6]},)"
-            R"("__metadata__":{"schema_version":"1"}})";
-        const ReferenceSnapshot snapshot =
-            ReferenceSnapshot::from_bytes(safetensors(header, {0, 0, 0, 0, 0, 0}));
+    "replay tensors replace the canonical voter order and supply children and order"_test = [] {
         cpu::Buffers buffers;
-        buffers.ensure(1, 1);
-        buffers.n = 1;
-        buffers.xy = {0, 0};
-        buffers.gradients = {1.f, -1.f};
-        buffers.edge_map.setTo(0);
-        fill_level(snapshot, 0, Stage::edge_points, buffers);
-        expect(eq(buffers.n, 0u));
-        expect(buffers.xy.empty());
-        expect(buffers.gradients.empty());
-        expect(eq(buffers.edge_map(0, 0), -1));
+        buffers.ensure(2, 1);
+        fill_level(two_point_replay().build(), 0, Stage::linking, buffers);
+        expect(buffers.voters_values == std::vector<std::int32_t>{0, 1});
+        expect(buffers.children_values == std::vector<std::int32_t>{1, 0});
+        expect(buffers.loop_one_order == std::vector<std::int32_t>{0});
     };
 
-    "fills stage buffers and reports exact plane mismatches"_test = [] {
-        // Include `src` and `dx` for a 3x2 level, leaving out `dy` to check missing data
-        const std::string header =
-            R"({"pyramid/level0/src":{"dtype":"U8","shape":[2,3],"data_offsets":[0,6]},)"
-            R"("gradient/level0/dx":{"dtype":"I16","shape":[2,3],"data_offsets":[6,18]},)"
-            R"("__metadata__":{"x":"y"}})";
-        const ReferenceSnapshot snapshot = ReferenceSnapshot::from_bytes(
-            safetensors(header, {1, 2, 3, 4, 5, 6, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0})
-        );
-        const Tensor& src = snapshot.tensor(Stage::pyramid, 0, "src");
-
+    "fill rejects replay indices and offsets out of range"_test = [] {
+        const std::vector<std::pair<std::string, std::vector<std::int32_t>>> corrupted = {
+            {"replay/vote/level0/voter_offsets", {127, 1, 2}},
+            {"replay/vote/level0/voter_values", {127, 1}},
+            {"replay/linking/level0/child_offsets", {127, 2}},
+            {"replay/linking/level0/child_values", {127, 0}},
+            {"replay/linking/level0/order", {127}},
+        };
         cpu::Buffers buffers;
-        buffers.ensure(3, 2);
-        fill_level(snapshot, 0, Stage::pyramid, buffers);
-        expect(eq(buffers.src(1, 1), 5));
-        expect(compare_plane<std::uint8_t>(src, buffers.src_plane().as_const()).exact());
-
-        buffers.src(1, 1) = 0;
-        buffers.src(1, 2) = 0;
-        const Mismatch mismatch = compare_plane<std::uint8_t>(src, buffers.src_plane().as_const());
-        expect(eq(mismatch.count, 2u));
-        expect(eq(mismatch.first, 4u)); // First difference at (y 1, x 1)
-
-        cpu::Buffers wrong_size;
-        wrong_size.ensure(2, 3);
-        expect(throws<std::runtime_error>([&] {
-            (void)fill_level(snapshot, 0, Stage::pyramid, wrong_size);
-        }));
-        // Both fills need the missing `dy` plane and must fail
-        expect(throws<std::runtime_error>([&] {
-            (void)fill_level(snapshot, 0, Stage::gradient, buffers);
-        }));
-        expect(throws<std::runtime_error>([&] {
-            (void)fill_level(snapshot, 0, Stage::edges, buffers);
-        }));
+        buffers.ensure(2, 1);
+        for (const auto& [name, values] : corrupted) {
+            SnapshotBuilder builder = two_point_replay();
+            builder.add<std::int32_t>(name, {values.size()}, values);
+            const ReferenceSnapshot snapshot = builder.build();
+            expect(throws<std::runtime_error>([&] {
+                fill_level(snapshot, 0, Stage::linking, buffers);
+            })) << name;
+        }
     };
 };
 

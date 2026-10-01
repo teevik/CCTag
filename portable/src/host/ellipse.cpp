@@ -380,6 +380,14 @@ inline suite<"ellipse"> ellipse_suite = [] {
         expect(!fit_ellipse(points, scratch, ellipse));
         expect(!ellipse_through_five(points, ellipse));
     };
+
+    "five point fitting rejects a conic whose axes are imaginary"_test = [] {
+        // A minimized near-collinear draw whose conic has no real ellipse axes
+        const std::array<Eigen::Vector2f, 5>
+            points{Eigen::Vector2f{822, 383}, {830, 380}, {823, 383}, {828, 381}, {827, 381}};
+        Ellipse ellipse;
+        expect(!ellipse_through_five(points, ellipse));
+    };
 };
 
 } // namespace cctag::portable::tests::ellipse

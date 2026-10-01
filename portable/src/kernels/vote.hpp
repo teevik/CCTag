@@ -38,8 +38,8 @@ inline std::int32_t descent_at(
     Plane<const std::int32_t> edge_map,
     Plane<const std::int16_t> image_dx,
     Plane<const std::int16_t> image_dy,
-    std::uint32_t input_width,
-    std::uint32_t input_height,
+    std::uint32_t width,
+    std::uint32_t height,
     std::size_t max_steps,
     int gradient_threshold
 ) {
@@ -61,8 +61,8 @@ inline std::int32_t descent_at(
         }
     };
     const auto inside = [&](int px, int py) {
-        return px >= 0 && px < static_cast<int>(input_width) && py >= 0
-            && py < static_cast<int>(input_height);
+        return px >= 0 && px < static_cast<int>(width) && py >= 0
+            && py < static_cast<int>(height);
     };
     const auto point_at = [&](int px, int py) -> std::int32_t {
         if (static_cast<std::uint32_t>(px) >= edge_map.width
@@ -131,9 +131,7 @@ inline CastVote cast_vote_at(
         return -dot >= 0.f;
     };
     const auto distance = [&](int a, int b) {
-        const double dx = xy[2 * b] - xy[2 * a];
-        const double dy = xy[2 * b + 1] - xy[2 * a + 1];
-        return std::sqrt(static_cast<float>(dx * dx) + static_cast<float>(dy * dy));
+        return std::hypot(float(xy[2 * b] - xy[2 * a]), float(xy[2 * b + 1] - xy[2 * a + 1]));
     };
     std::size_t count = 0;
     const auto ratios_match = [&] {
@@ -148,8 +146,10 @@ inline CastVote cast_vote_at(
     };
 
     CastVote vote;
+    // A link target can be walked through only if it is itself in the vote graph
+    const auto traversable = [&](int target) { return target != -1 && links[2 * target] != -1; };
     int current = links[2 * point];
-    if (current == -1 || !opposed(point, current)) {
+    if (!traversable(current) || !opposed(point, current)) {
         return vote;
     }
     distances[count++] = distance(point, current);
@@ -157,7 +157,7 @@ inline CastVote cast_vote_at(
     for (std::size_t crown = 1; crown < crowns; ++crown) {
         vote.point = -1;
         int target = links[2 * current + 1];
-        if (target == -1 || !opposed(target, current)) {
+        if (!traversable(target) || !opposed(target, current)) {
             break;
         }
         distances[count++] = distance(target, current);
@@ -167,7 +167,7 @@ inline CastVote cast_vote_at(
         }
         current = target;
         target = links[2 * current];
-        if (target == -1 || !opposed(target, current)) {
+        if (!traversable(target) || !opposed(target, current)) {
             break;
         }
         distances[count++] = distance(target, current);
@@ -179,16 +179,6 @@ inline CastVote cast_vote_at(
         vote.point = current;
     }
     return vote;
-}
-
-/// Computes a point's flow length as a running mean in canonical voter order
-inline float
-gather_flow_length_at(std::span<const std::int32_t> voters, std::span<const float> vote_distance) {
-    float flow_length = 0.f;
-    for (std::size_t k = 0; k < voters.size(); ++k) {
-        flow_length = (flow_length * k + vote_distance[voters[k]]) / (k + 1);
-    }
-    return flow_length;
 }
 
 } // namespace cctag::portable::kernels

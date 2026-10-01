@@ -771,107 +771,14 @@ cctag::TagPipe* initCuda( int      pipeId,
 }
 #endif // CCTAG_WITH_CUDA
 
-/**
- * @brief Perform the CCTag detection on a gray scale image
- * 
- * @param[out] markers Detected markers. WARNING: only markers with status == 1 are valid ones. (status available via getStatus()) 
- * @param[in] frame A frame number. Can be anything (e.g. 0).
- * @param[in] imgGraySrc Gray scale input image.
- * @param[in] providedParams Contains all the parameters.
- * @param[in] bank CCTag bank.
- * @param[in] No longer used.
- */
-void cctagDetection(
-        CCTag::List& markers,
-        int          pipeId,
-        std::size_t frame,
-        const cv::Mat & imgGraySrc,
-        const Parameters & providedParams,
-        const cctag::CCTagMarkersBank & bank,
-        bool bDisplayEllipses,
-        cctag::logtime::Mgmt* durations,
-        Probe* probe )
-
+namespace {
+/// Identifies the candidate markers, removes overlapping ones keeping the better
+/// marker, sorts the result and reports it to the probe and debug outputs.
+void identifyAndFinalize(CCTag::List& markers, const cv::Mat& source,
+                         const Parameters& params,
+                         const std::vector<std::vector<float>>& bank,
+                         TagPipe* pipe1, logtime::Mgmt* durations, Probe* probe)
 {
-    using namespace cctag;
-    
-    const Parameters& params = Parameters::OverrideLoaded ?
-      Parameters::Override : providedParams;
-
-    if( durations ) durations->log( "start" );
-  
-    std::srand(1);
-
-#ifdef CCTAG_WITH_CUDA
-    bool cuda_allocates = params._useCuda;
-#else
-    bool cuda_allocates = false;
-#endif
-  
-    ImagePyramid imagePyramid( imgGraySrc.cols,
-                               imgGraySrc.rows,
-                               params._numberOfProcessedMultiresLayers,
-                               cuda_allocates );
-
-    cctag::TagPipe* pipe1 = nullptr;
-#ifdef CCTAG_WITH_CUDA
-    if( params._useCuda ) {
-        pipe1 = initCuda( pipeId,
-                          imgGraySrc.size().width,
-	                      imgGraySrc.size().height,
-	                      params,
-	                      durations );
-
-        if( durations ) durations->log( "after initCuda" );
-
-        assert( imgGraySrc.elemSize() == 1 );
-        assert( imgGraySrc.isContinuous() );
-        assert( imgGraySrc.type() == CV_8U );
-        unsigned char* pix = imgGraySrc.data;
-
-        pipe1->load( frame, pix );
-
-        if( durations ) {
-            cudaDeviceSynchronize();
-            durations->log( "after CUDA load" );
-        }
-
-        pipe1->tagframe( );
-
-        if( durations ) durations->log( "after CUDA stages" );
-    } else { // not params.useCuda
-#endif // CCTAG_WITH_CUDA
-
-        if (probe) probe->enter("pyramid");
-        imagePyramid.build( imgGraySrc,
-                            params._cannyThrLow,
-                            params._cannyThrHigh,
-                            &params );
-        if (probe) probe->leave("pyramid");
-        if (probe) probePyramid(probe, imagePyramid);
-
-#ifdef CCTAG_WITH_CUDA
-    } // not params.useCuda
-#endif // CCTAG_WITH_CUDA
-
-#ifdef CCTAG_WITH_CUDA
-    if(pipe1) probe = nullptr; // Legacy CUDA stage data is not probed in v1.
-#endif
-  
-    if( durations ) durations->log( "before cctagMultiresDetection" );
-
-    cctagMultiresDetection( markers,
-                            imgGraySrc,
-                            imagePyramid,
-                            frame,
-                            pipe1,
-                            params,
-                            durations,
-                            probe );
-
-    if( durations ) durations->log( "after cctagMultiresDetection" );
-    if (probe) probeCandidates(probe, markers);
-
 #ifdef CCTAG_WITH_CUDA
     if( pipe1 ) {
         /* identification in CUDA requires a host-side nearby point struct
@@ -887,8 +794,8 @@ void cctagDetection(
         }
     }
 #endif // CCTAG_WITH_CUDA
-  
-    CCTagVisualDebug::instance().initBackgroundImage(imagePyramid.getLevel(0)->getSrc());
+
+    CCTagVisualDebug::instance().initBackgroundImage(source);
 
     // Identification step
     if (params._doIdentification)
@@ -913,7 +820,7 @@ void cctagDetection(
                 tagIndex,
                 cctag,
                 vSelectedCuts[tagIndex],
-                imagePyramid.getLevel(0)->getSrc(),
+                source,
                 params );
 
             tagIndex++;
@@ -972,8 +879,8 @@ void cctagDetection(
                     tagIndex,
                     cctag,
                     vSelectedCuts[tagIndex],
-                    bank.getMarkers(),
-                    imagePyramid.getLevel(0)->getSrc(),
+                    bank,
+                    source,
                     pipe1,
                     params );
             }
@@ -994,7 +901,7 @@ void cctagDetection(
         CCTag::releaseNearbyPointMemory( pipe1->getId() );
     }
 #endif
-    
+
     // Delete overlapping markers while keeping the best ones.
     CCTag::List markersPrelim, markersFinal;
     for(const CCTag & marker : markers)
@@ -1008,11 +915,11 @@ void cctagDetection(
     }
 
     markers = markersFinal;
-  
+
     markers.sort();
     if (probe) probeMarkers(probe, markers);
 
-    CCTagVisualDebug::instance().initBackgroundImage(imagePyramid.getLevel(0)->getSrc());
+    CCTagVisualDebug::instance().initBackgroundImage(source);
     CCTagVisualDebug::instance().writeIdentificationView(markers);
     CCTagFileDebug::instance().newSession("identification.txt");
 
@@ -1020,6 +927,132 @@ void cctagDetection(
     {
         CCTagFileDebug::instance().outputMarkerInfos(marker);
     }
+}
+} // namespace
+
+void replayIdentification(CCTag::List& markers, int pipeId, const cv::Mat& source,
+                          const Parameters& params,
+                          const std::vector<std::vector<float>>& bank, Probe* probe)
+{
+    if (Parameters::OverrideLoaded)
+        throw std::runtime_error("identification replay cannot use a parameter override");
+    TagPipe* pipe = nullptr;
+#ifdef CCTAG_WITH_CUDA
+    if (params._useCuda) {
+        pipe = initCuda(pipeId, source.cols, source.rows, params, nullptr);
+        pipe->load(0, source.data);
+        const cudaError_t error = cudaDeviceSynchronize();
+        if (error != cudaSuccess) throw std::runtime_error(cudaGetErrorString(error));
+    }
+#else
+    if (params._useCuda) throw std::runtime_error("CUDA identification replay needs a CUDA build");
+#endif
+    identifyAndFinalize(markers, source, params, bank, pipe, nullptr, probe);
+}
+
+/**
+ * @brief Perform the CCTag detection on a gray scale image
+ *
+ * @param[out] markers Detected markers. WARNING: only markers with status == 1 are valid ones. (status available via getStatus())
+ * @param[in] pipeId Choose one of up to 3 parallel CUDA pipes.
+ * @param[in] frame A frame number. Can be anything (e.g. 0).
+ * @param[in] imgGraySrc Gray scale input image.
+ * @param[in] providedParams Contains all the parameters.
+ * @param[in] bank CCTag bank.
+ * @param[in] bDisplayEllipses No longer used.
+ * @param[in] durations Optional object to store execution times.
+ * @param[in] probe Optional observer of stage outputs and timing.
+ */
+void cctagDetection(
+        CCTag::List& markers,
+        int          pipeId,
+        std::size_t frame,
+        const cv::Mat & imgGraySrc,
+        const Parameters & providedParams,
+        const cctag::CCTagMarkersBank & bank,
+        bool bDisplayEllipses,
+        cctag::logtime::Mgmt* durations,
+        Probe* probe )
+
+{
+    using namespace cctag;
+
+    const Parameters& params = Parameters::OverrideLoaded ?
+      Parameters::Override : providedParams;
+
+    if( durations ) durations->log( "start" );
+
+    std::srand(1);
+
+#ifdef CCTAG_WITH_CUDA
+    bool cuda_allocates = params._useCuda;
+#else
+    bool cuda_allocates = false;
+#endif
+
+    ImagePyramid imagePyramid( imgGraySrc.cols,
+                               imgGraySrc.rows,
+                               params._numberOfProcessedMultiresLayers,
+                               cuda_allocates );
+
+    cctag::TagPipe* pipe1 = nullptr;
+#ifdef CCTAG_WITH_CUDA
+    if( params._useCuda ) {
+        pipe1 = initCuda( pipeId,
+                          imgGraySrc.size().width,
+	                      imgGraySrc.size().height,
+	                      params,
+	                      durations );
+
+        if( durations ) durations->log( "after initCuda" );
+
+        assert( imgGraySrc.elemSize() == 1 );
+        assert( imgGraySrc.isContinuous() );
+        assert( imgGraySrc.type() == CV_8U );
+        unsigned char* pix = imgGraySrc.data;
+
+        pipe1->load( frame, pix );
+
+        if( durations ) {
+            cudaDeviceSynchronize();
+            durations->log( "after CUDA load" );
+        }
+
+        pipe1->tagframe( );
+        if (probe && probe->observes_stages()) pipe1->probePyramid(probe);
+
+        if( durations ) durations->log( "after CUDA stages" );
+    } else { // not params.useCuda
+#endif // CCTAG_WITH_CUDA
+
+        if (probe) probe->enter("pyramid");
+        imagePyramid.build( imgGraySrc,
+                            params._cannyThrLow,
+                            params._cannyThrHigh,
+                            &params );
+        if (probe) probe->leave("pyramid");
+        if (probe) probePyramid(probe, imagePyramid);
+
+#ifdef CCTAG_WITH_CUDA
+    } // not params.useCuda
+#endif // CCTAG_WITH_CUDA
+
+    if( durations ) durations->log( "before cctagMultiresDetection" );
+
+    cctagMultiresDetection( markers,
+                            imgGraySrc,
+                            imagePyramid,
+                            frame,
+                            pipe1,
+                            params,
+                            durations,
+                            probe );
+
+    if( durations ) durations->log( "after cctagMultiresDetection" );
+    if (probe) probeCandidates(probe, markers);
+
+    identifyAndFinalize(markers, imagePyramid.getLevel(0)->getSrc(), params,
+                        bank.getMarkers(), pipe1, durations, probe);
 }
 
 } // namespace cctag

@@ -1,438 +1,397 @@
 /*
  * Copyright 2026, Simula Research Laboratory
- *
- * This Source Code Form is subject to the terms of the Mozilla Public
- * License, v. 2.0. If a copy of the MPL was not distributed with this
- * file, You can obtain one at http://mozilla.org/MPL/2.0/.
+ * SPDX-License-Identifier: MPL-2.0
  */
-// Run each CPU pipeline stage on reference inputs and compare its output with the reference
+// portable_cuda_isolation: runs each CPU stage on inputs restored from a CUDA reference
+// capture and writes one snapshot per stage, then two full-pipeline snapshots at different
+// OpenMP thread counts. It applies no acceptance rule. The snapshot comparator does.
 #include "backends/cpu/backend.hpp"
 #include "host/context.hpp"
-#include "kernels/plane.hpp"
+#include "host/detect.hpp"
 #include "support/reference_snapshot.hpp"
 
-#include <cctag/ICCTag.hpp>
+#include <cctag/cctag_config.hpp>
 
-#include <boost/ut.hpp>
+#include <boost/json.hpp>
 
 #include <omp.h>
 
 #include <algorithm>
-#include <cstdint>
-#include <cstdlib>
+#include <cstring>
+#include <fstream>
 #include <iostream>
-#include <vector>
+#include <numeric>
+#include <utility>
 
-using namespace boost::ut;
 using namespace cctag::portable;
 using namespace cctag::portable::test;
 
 namespace {
 
-std::vector<std::filesystem::path> snapshot_files_or_fail() {
-    const std::vector<std::filesystem::path> files = reference_snapshot_files();
-    expect(!files.empty()) << "no *.safetensors in " << reference_snapshots_dir()->string()
-                           << fatal;
-    return files;
-}
+constexpr int kStageCount = int(Stage::markers) + 1;
 
-void expect_same_candidate_marker(const CandidateMarker& actual, const CandidateMarker& expected) {
-    const auto same_point = [](const DirectedPoint& a, const DirectedPoint& b) {
-        return a.x == b.x && a.y == b.y && a.dx == b.dx && a.dy == b.dy;
+struct OwnedTensor {
+    std::string dtype;
+    std::vector<std::uint64_t> shape;
+    std::vector<std::uint8_t> bytes;
+};
+using Tensors = std::map<std::string, OwnedTensor>;
+
+/// Adds a copy of `values` as a tensor of the given shape
+template <class T>
+void put(
+    Tensors& tensors,
+    std::string name,
+    std::vector<std::uint64_t> shape,
+    std::span<const T> values
+) {
+    OwnedTensor tensor{
+        dtype_name(dtype_of<T>()),
+        std::move(shape),
+        std::vector<std::uint8_t>(values.size_bytes())
     };
-    expect(actual.center == expected.center) << "center";
-    expect(actual.rescaled_outer_ellipse.conic == expected.rescaled_outer_ellipse.conic)
-        << "outer ellipse";
-    expect(eq(actual.quality, expected.quality)) << "quality";
-    expect(std::ranges::equal(actual.outer_points, expected.outer_points, same_point))
-        << "directed outer points";
+    if (!values.empty()) {
+        std::memcpy(tensor.bytes.data(), values.data(), values.size_bytes());
+    }
+    tensors.emplace(std::move(name), std::move(tensor));
 }
 
+/// Adds a copy of a plane as a `[height, width]` tensor
+template <class T>
+void plane(Tensors& tensors, std::string name, kernels::Plane<const T> source) {
+    std::vector<T> values;
+    for (std::uint32_t y = 0; y < source.height; ++y) {
+        values.insert(values.end(), source.row(y), source.row(y) + source.width);
+    }
+    put<T>(tensors, std::move(name), {source.height, source.width}, values);
+}
+
+/// Collects one stage's outputs under the snapshot's tensor names. Candidates and markers
+/// are sorted by (level, y, x) and (id, y, x) so their order does not depend on detection.
+Tensors observe(Context<cpu::Backend>& context, Stage stage) {
+    Tensors tensors;
+    for (std::size_t i = 0; i < context.levels.size(); ++i) {
+        auto& level = context.levels[i];
+        const std::string p = std::string(stage_name(stage)) + "/level" + std::to_string(i) + "/";
+        switch (stage) {
+            case Stage::pyramid:
+                plane(tensors, p + "src", level.src_plane().as_const());
+                break;
+            case Stage::gradient:
+                plane(tensors, p + "dx", level.dx_plane().as_const());
+                plane(tensors, p + "dy", level.dy_plane().as_const());
+                break;
+            case Stage::edges:
+                plane(tensors, p + "edges", level.edges_plane().as_const());
+                break;
+            case Stage::edge_points:
+                put<std::int32_t>(tensors, p + "xy", {level.n, 2}, level.xy);
+                put<float>(tensors, p + "gradients", {level.n, 2}, level.gradients);
+                break;
+            case Stage::vote:
+                put<std::int32_t>(tensors, p + "links", {level.n, 2}, level.links);
+                put<std::int32_t>(
+                    tensors,
+                    p + "voters/offsets",
+                    {level.n + 1},
+                    level.voters_offsets
+                );
+                put<std::int32_t>(
+                    tensors,
+                    p + "voters/values",
+                    {level.voters_values.size()},
+                    level.voters_values
+                );
+                put<std::int32_t>(tensors, p + "is_max", {level.n}, level.is_max);
+                put<float>(tensors, p + "flow_length", {level.n}, level.flow_length);
+                put<std::int32_t>(tensors, p + "seeds", {level.seeds.size()}, level.seeds);
+                put<std::int32_t>(
+                    tensors,
+                    p + "seed_order",
+                    {level.seed_order.size()},
+                    level.seed_order
+                );
+                break;
+            case Stage::linking:
+                put<std::int32_t>(
+                    tensors,
+                    p + "seeds",
+                    {level.link_seeds.size()},
+                    level.link_seeds
+                );
+                put<std::int32_t>(
+                    tensors,
+                    p + "segments/offsets",
+                    {level.segment_offsets.size()},
+                    level.segment_offsets
+                );
+                put<std::int32_t>(
+                    tensors,
+                    p + "segments/values",
+                    {level.segment_values.size()},
+                    level.segment_values
+                );
+                put<std::int32_t>(
+                    tensors,
+                    p + "child_counts",
+                    {level.child_counts.size()},
+                    level.child_counts
+                );
+                put<float>(tensors, p + "avg_vote", {level.avg_vote.size()}, level.avg_vote);
+                break;
+            default:
+                break;
+        }
+    }
+    if (stage == Stage::candidates) {
+        auto view = host_candidates(context);
+        std::vector<std::size_t> order(view.n);
+        std::iota(order.begin(), order.end(), 0);
+        std::stable_sort(order.begin(), order.end(), [&](auto a, auto b) {
+            return std::tie(view.levels[a], view.ellipses[5 * a + 1], view.ellipses[5 * a])
+                < std::tie(view.levels[b], view.ellipses[5 * b + 1], view.ellipses[5 * b]);
+        });
+        std::vector<float> ellipse, quality;
+        std::vector<std::int32_t> levels;
+        for (auto i : order) {
+            ellipse.insert(
+                ellipse.end(),
+                view.ellipses.begin() + 5 * i,
+                view.ellipses.begin() + 5 * i + 5
+            );
+            quality.push_back(view.quality[i]);
+            levels.push_back(view.levels[i]);
+        }
+        put<float>(tensors, "candidates/ellipse", {view.n, 5}, ellipse);
+        put<float>(tensors, "candidates/quality", {view.n}, quality);
+        put<std::int32_t>(tensors, "candidates/level", {view.n}, levels);
+    }
+    if (stage == Stage::markers) {
+        auto view = host_markers(context);
+        std::vector<std::size_t> order(view.n);
+        std::iota(order.begin(), order.end(), 0);
+        std::stable_sort(order.begin(), order.end(), [&](auto a, auto b) {
+            return std::tie(view.ids[a], view.xy[2 * a + 1], view.xy[2 * a])
+                < std::tie(view.ids[b], view.xy[2 * b + 1], view.xy[2 * b]);
+        });
+        std::vector<float> xy;
+        std::vector<std::int32_t> ids, statuses;
+        for (auto i : order) {
+            xy.insert(xy.end(), {view.xy[2 * i], view.xy[2 * i + 1]});
+            ids.push_back(view.ids[i]);
+            statuses.push_back(view.statuses[i]);
+        }
+        put<float>(tensors, "markers/xy", {view.n, 2}, xy);
+        put<std::int32_t>(tensors, "markers/id", {view.n}, ids);
+        put<std::int32_t>(tensors, "markers/status", {view.n}, statuses);
+    }
+    return tensors;
+}
+
+/// Writes a safetensors snapshot with the reference's identity metadata. Unless `full`, the
+/// reference tensors of the stages before `last` are included as the restored inputs.
+void write(
+    const ReferenceSnapshot& reference,
+    Tensors values,
+    Stage last,
+    const std::filesystem::path& path,
+    bool full = false
+) {
+    if (!full) {
+        for (const auto& [name, tensor] : reference.tensors()) {
+            auto stage = parse_stage(name.substr(0, name.find('/')));
+            if (stage && int(*stage) < int(last)) {
+                values.emplace(
+                    name,
+                    OwnedTensor{
+                        dtype_name(tensor.dtype),
+                        tensor.shape,
+                        {tensor.bytes.begin(), tensor.bytes.end()}
+                    }
+                );
+            }
+        }
+    }
+    boost::json::object header, metadata;
+    for (const char* key :
+         {"format",
+          "format_version",
+          "levels",
+          "processed_levels",
+          "image_sha256",
+          "image_width",
+          "image_height",
+          "problem",
+          "crowns",
+          "params_sha256",
+          "effective_parameters",
+          "debug_dir",
+          "semantic_params_version",
+          "semantic_params_sha256"}) {
+        metadata[key] = reference.meta(key);
+    }
+    boost::json::object reference_metadata;
+    for (const auto& [key, value] : reference.metadata()) {
+        reference_metadata[key] = value;
+    }
+    metadata["diagnostic_reference_metadata"] = boost::json::serialize(reference_metadata);
+    metadata["fork_commit"] = "";
+    metadata["pinned"] = "false";
+    metadata["source_tree_sha256"] = CCTAG_SOURCE_TREE_SHA256;
+    metadata["detector_build_settings"] = CCTAG_BUILD_SETTINGS;
+    metadata["diagnostic_openmp_threads"] = std::to_string(omp_get_max_threads());
+    metadata["variant"] = "portable/cpu";
+    metadata["pipeline"] = "portable";
+    metadata["diagnostic_algorithm"] = "cuda";
+    metadata["diagnostic_mode"] = full ? "full-pipeline" : "independent-stage-inputs";
+    metadata["diagnostic_reference_problem"] = reference.problem();
+    std::string stages;
+    for (int i = 0; i <= int(last); ++i) {
+        if (i) {
+            stages += ',';
+        }
+        stages += stage_name(Stage(i));
+    }
+    metadata["stages"] = stages;
+    header["__metadata__"] = metadata;
+    std::uint64_t offset = 0;
+    for (const auto& [name, tensor] : values) {
+        boost::json::array shape;
+        for (auto extent : tensor.shape) {
+            shape.emplace_back(extent);
+        }
+        header[name] = boost::json::object{
+            {"dtype", tensor.dtype},
+            {"shape", shape},
+            {"data_offsets", boost::json::array{offset, offset + tensor.bytes.size()}}
+        };
+        offset += tensor.bytes.size();
+    }
+    std::string json = boost::json::serialize(header);
+    while (json.size() % 8) {
+        json += ' ';
+    }
+    std::ofstream out(path, std::ios::binary);
+    if (!out) {
+        throw std::runtime_error("cannot write diagnostic snapshot");
+    }
+    for (int i = 0; i < 8; ++i) {
+        out.put(char(std::uint64_t(json.size()) >> (8 * i)));
+    }
+    out.write(json.data(), json.size());
+    for (const auto& [_, tensor] : values) {
+        out.write(reinterpret_cast<const char*>(tensor.bytes.data()), tensor.bytes.size());
+    }
+    if (!out) {
+        throw std::runtime_error("failed diagnostic snapshot write");
+    }
+}
 } // namespace
 
-int main(int argc, const char** argv) {
-    if (!reference_snapshots_dir()) {
-        std::cout << "CCTAG_REFERENCE_SNAPSHOTS is not set: enter `nix develop` or point it "
-                     "at the reference-snapshot store\n";
-        return 77; // Tell CTest to skip when the reference snapshot directory is unset
+int main(int argc, char** argv) {
+    if (argc != 3) {
+        std::cerr << "usage: portable_cuda_isolation REFERENCE.safetensors OUTPUT_DIRECTORY\n";
+        return 2;
     }
-
-    const suite<"stage_isolation"> stage_isolation_suite = [] {
-        "public detection candidates and their clones retain the observed marker results"_test =
-            [] {
-            struct MarkerProbe : cctag::Probe {
-                std::vector<Eigen::Vector2f> centers;
-                std::vector<std::int32_t> ids;
-                std::vector<std::int32_t> statuses;
-                void markers(const cctag::MarkersView& view) override {
-                    for (std::uint32_t i = 0; i < view.candidate_count; ++i) {
-                        centers.emplace_back(
-                            view.positions_xy[2 * i],
-                            view.positions_xy[2 * i + 1]
-                        );
-                        ids.push_back(view.marker_ids[i]);
-                        statuses.push_back(view.identification_statuses[i]);
+    try {
+        const auto reference = ReferenceSnapshot::read(argv[1]);
+        if (reference.meta("variant") != "reference/cuda"
+            || reference.meta("replay_version") != "1") {
+            throw std::runtime_error("complete CUDA reference capture required");
+        }
+        const auto params = reference_parameters(reference);
+        const std::filesystem::path output(argv[2]);
+        std::filesystem::create_directories(output);
+        for (int index = 0; index < kStageCount; ++index) {
+            const auto stage = Stage(index);
+            Context<cpu::Backend> context;
+            if (stage == Stage::markers) {
+                fill_identification(reference, context);
+            } else {
+                fill_context(reference, index == 0 ? Stage::pyramid : Stage(index - 1), context);
+            }
+            switch (stage) {
+                case Stage::pyramid:
+                    for (std::size_t i = 1; i < context.levels.size(); ++i) {
+                        cpu::Backend::pyramid(context.levels[i], context.levels[0]);
                     }
-                }
-            };
-            for (const auto& file : snapshot_files_or_fail()) {
-                const ReferenceSnapshot snapshot = ReferenceSnapshot::read(file);
-                auto pixels = snapshot.tensor(Stage::pyramid, 0, "src").as<std::uint8_t>();
-                const cv::Mat1b image(
-                    snapshot.image_height(),
-                    snapshot.image_width(),
-                    pixels.data()
-                );
-                const cctag::Parameters params(snapshot.crowns());
-                boost::ptr_list<cctag::ICCTag> detections;
-                MarkerProbe probe;
-                cctag::cctagDetection(detections, 77, 0, image, params, nullptr, nullptr, &probe);
-                expect(!detections.empty()) << snapshot.problem() << fatal;
-                expect(eq(detections.size(), probe.ids.size())) << fatal;
-                boost::ptr_list<cctag::ICCTag> clones(detections);
-                // Reuse the pipe and clear its results while the API's clones stay alive
-                cctag::cctagDetection(
-                    detections,
-                    77,
-                    1,
-                    cv::Mat1b(32, 32, std::uint8_t{0}),
-                    params
-                );
-                expect(detections.empty());
-                std::size_t i = 0;
-                for (const auto& clone : clones) {
-                    expect(eq(clone.id(), probe.ids[i]));
-                    expect(eq(clone.getStatus(), probe.statuses[i]));
-                    expect(eq(clone.x(), probe.centers[i].x()));
-                    expect(eq(clone.y(), probe.centers[i].y()));
-                    expect(clone.rescaledOuterEllipse().a() > 0);
-                    expect(clone.rescaledOuterEllipse().b() > 0);
-                    ++i;
-                }
-            }
-        };
-        "markers are exact across thread counts and reused contexts"_test = [] {
-            const int threads = omp_get_max_threads();
-            Context<cpu::Backend> reused;
-            for (const auto& file : snapshot_files_or_fail()) {
-                const ReferenceSnapshot snapshot = ReferenceSnapshot::read(file);
-                const cctag::Parameters params(snapshot.crowns());
-                Context<cpu::Backend> fresh;
-                fill_context(snapshot, Stage::linking, fresh);
-                omp_set_num_threads(1);
-                cpu::Backend::candidates(fresh, params);
-                cpu::Backend::markers(fresh, params);
-                const MarkersHost expected = host_markers(fresh);
-                expect(std::ranges::find(expected.statuses, 1) != expected.statuses.end())
-                    << snapshot.problem() << "must exercise reliable identification";
-                for (const int count : {1, 3, threads}) {
-                    fill_context(snapshot, Stage::linking, reused);
-                    reused.candidate_markers = fresh.candidate_markers;
-                    omp_set_num_threads(count);
-                    cpu::Backend::markers(reused, params);
-                    const MarkersHost actual = host_markers(reused);
-                    expect(std::ranges::equal(expected.xy, actual.xy))
-                        << snapshot.problem() << "centers at" << count << "threads";
-                    expect(std::ranges::equal(expected.ids, actual.ids))
-                        << snapshot.problem() << "ids";
-                    expect(std::ranges::equal(expected.statuses, actual.statuses))
-                        << snapshot.problem() << "statuses";
-                    expect(eq(fresh.markers.size(), reused.markers.size())) << fatal;
-                    for (std::size_t i = 0; i < fresh.markers.size(); ++i) {
-                        expect(fresh.markers[i].homography == reused.markers[i].homography)
-                            << snapshot.problem() << "homography";
-                        expect(eq(fresh.markers[i].quality, reused.markers[i].quality))
-                            << snapshot.problem() << "quality";
+                    break;
+                case Stage::gradient:
+                    for (auto& level : context.levels) {
+                        cpu::Backend::gradient(level);
                     }
-                }
-            }
-            omp_set_num_threads(threads);
-        };
-        "candidate markers are exact across thread counts and reused contexts"_test = [] {
-            const int threads = omp_get_max_threads();
-            Context<cpu::Backend> reused;
-            for (const auto& file : snapshot_files_or_fail()) {
-                const ReferenceSnapshot snapshot = ReferenceSnapshot::read(file);
-                const cctag::Parameters params(snapshot.crowns());
-                Context<cpu::Backend> fresh;
-                fill_context(snapshot, Stage::linking, fresh);
-                omp_set_num_threads(1);
-                cpu::Backend::candidates(fresh, params);
-                const CandidatesHost expected = host_candidates(fresh);
-                for (const int count : {1, 3, threads}) {
-                    fill_context(snapshot, Stage::linking, reused);
-                    omp_set_num_threads(count);
-                    cpu::Backend::candidates(reused, params);
-                    const CandidatesHost actual = host_candidates(reused);
-                    expect(std::ranges::equal(expected.ellipses, actual.ellipses))
-                        << snapshot.problem() << "ellipses at" << count << "threads";
-                    expect(std::ranges::equal(expected.levels, actual.levels))
-                        << snapshot.problem() << "levels";
-                    expect(std::ranges::equal(expected.quality, actual.quality))
-                        << snapshot.problem() << "quality";
-                    const auto fresh_candidates = fresh.candidate_markers.view();
-                    const auto reused_candidates = reused.candidate_markers.view();
-                    expect(eq(fresh_candidates.size(), reused_candidates.size())) << fatal;
-                    for (std::size_t i = 0; i < fresh_candidates.size(); ++i) {
-                        const auto& a = fresh_candidates[i].outer_points;
-                        const auto& b = reused_candidates[i].outer_points;
-                        expect(eq(a.size(), b.size()))
-                            << snapshot.problem() << "outer point count" << fatal;
-                        expect(
-                            std::equal(
-                                a.begin(),
-                                a.end(),
-                                b.begin(),
-                                [](const auto& left, const auto& right) {
-                            return left.x == right.x && left.y == right.y && left.dx == right.dx
-                                && left.dy == right.dy;
-                        }
-                            )
-                        ) << snapshot.problem()
-                          << "directed outer points";
+                    break;
+                case Stage::edges:
+                    for (auto& level : context.levels) {
+                        cpu::Backend::edges(level, params);
                     }
-                }
-            }
-            omp_set_num_threads(threads);
-        };
-        "candidate views and detection candidates exclude inactive candidate markers"_test = [] {
-            for (const auto& file : snapshot_files_or_fail()) {
-                const ReferenceSnapshot snapshot = ReferenceSnapshot::read(file);
-                cctag::Parameters full_params(snapshot.crowns());
-                // Unidentified candidate markers are not deduplicated, so each active one
-                // must produce exactly one detection candidate.
-                full_params._doIdentification = false;
-                Context<cpu::Backend> context;
-                fill_context(snapshot, Stage::linking, context);
-
-                for (const std::size_t max_candidates_per_level : {1u, 0u}) {
-                    cpu::Backend::candidates(context, full_params);
-                    expect(!context.candidate_markers.view().empty())
-                        << snapshot.problem() << fatal;
-
-                    cctag::Parameters limited_params = full_params;
-                    limited_params._maximumNbCandidatesLoopTwo = max_candidates_per_level;
-                    cpu::Backend::candidates(context, limited_params);
-                    const auto active_count = context.candidate_markers.view().size();
-                    expect(le(active_count, context.levels.size() * max_candidates_per_level))
-                        << snapshot.problem();
-
-                    const CandidatesHost view = host_candidates(context);
-                    expect(eq(view.n, active_count));
-                    expect(eq(view.ellipses.size(), 5 * active_count));
-                    expect(eq(view.levels.size(), active_count));
-                    expect(eq(view.quality.size(), active_count));
-
-                    cpu::Backend::markers(context, limited_params);
-                    expect(eq(context.markers.size(), active_count));
-                }
-            }
-        };
-        "candidate markers retain data and storage after fewer or zero results"_test = [] {
-            for (const auto& file : snapshot_files_or_fail()) {
-                const ReferenceSnapshot snapshot = ReferenceSnapshot::read(file);
-                const cctag::Parameters full_params(snapshot.crowns());
-                Context<cpu::Backend> context;
-                fill_context(snapshot, Stage::linking, context);
-                cpu::Backend::candidates(context, full_params);
-                const auto initial = context.candidate_markers.view();
-                const std::vector<CandidateMarker> original_candidates(
-                    initial.begin(),
-                    initial.end()
-                );
-                expect(!original_candidates.empty()) << snapshot.problem() << fatal;
-
-                // Extra capacity distinguishes retained storage from a rebuilt vector
-                // that happens to receive the same allocation address.
-                std::vector<std::size_t> outer_point_capacities;
-                for (auto& marker : context.candidate_markers.view()) {
-                    marker.outer_points.reserve(marker.outer_points.size() + 16);
-                    outer_point_capacities.push_back(marker.outer_points.capacity());
-                }
-
-                for (const std::size_t max_candidates_per_level : {1u, 0u}) {
-                    // Full results -> fewer (or zero) results -> full results again.
-                    cctag::Parameters limited_params = full_params;
-                    limited_params._maximumNbCandidatesLoopTwo = max_candidates_per_level;
-                    cpu::Backend::candidates(context, limited_params);
-                    cpu::Backend::candidates(context, full_params);
-
-                    const auto restored = context.candidate_markers.view();
-                    expect(eq(restored.size(), original_candidates.size())) << fatal;
-                    for (std::size_t i = 0; i < restored.size(); ++i) {
-                        expect(restored[i].outer_points.capacity() >= outer_point_capacities[i])
-                            << snapshot.problem() << "outer point storage at candidate" << i;
-                        expect_same_candidate_marker(restored[i], original_candidates[i]);
+                    break;
+                case Stage::edge_points:
+                    for (auto& level : context.levels) {
+                        cpu::Backend::edge_points(level);
                     }
-                }
-            }
-        };
-        "candidates match reference snapshot from reference linking and level zero edges"_test =
-            [] {
-            for (const auto& file : snapshot_files_or_fail()) {
-                const ReferenceSnapshot snapshot = ReferenceSnapshot::read(file);
-                Context<cpu::Backend> context;
-                fill_context(snapshot, Stage::linking, context);
-                const cctag::Parameters params(snapshot.crowns());
-                cpu::Backend::candidates(context, params);
-                const auto ellipses = snapshot.tensor("candidates/ellipse").as<float>();
-                const auto levels = snapshot.tensor("candidates/level").as<std::int32_t>();
-                const auto quality = snapshot.tensor("candidates/quality").as<float>();
-                const auto comparison = compare_candidates(
-                    {static_cast<std::uint32_t>(levels.size()), ellipses, levels, quality},
-                    host_candidates(context)
-                );
-                bool accepted = comparison.passed;
-                if (const char* file = std::getenv("CCTAG_CANDIDATE_ALLOWANCE");
-                    !accepted && file) {
-                    const auto allowance = CandidateAllowance::read(file);
-                    accepted = allowance.allows(snapshot, comparison, "portable/cpu");
-                    if (accepted) {
-                        std::cout << snapshot.problem() << ": " << describe(comparison)
-                                  << "; accepted: " << allowance.reason << '\n';
+                    break;
+                case Stage::vote:
+                    for (auto& level : context.levels) {
+                        cpu::Backend::vote(level, params);
                     }
-                }
-                expect(accepted) << snapshot.problem() << describe(comparison);
+                    break;
+                case Stage::linking:
+                    for (auto& level : context.levels) {
+                        cpu::Backend::linking(level, params);
+                    }
+                    break;
+                case Stage::candidates:
+                    cpu::Backend::candidates(context, params);
+                    break;
+                case Stage::markers:
+                    cpu::Backend::markers(context, params);
+                    break;
             }
-        };
-        "pyramid matches reference snapshot from each reference finer level"_test = [] {
-            for (const auto& file : snapshot_files_or_fail()) {
-                const ReferenceSnapshot snapshot = ReferenceSnapshot::read(file);
-                Context<cpu::Backend> context;
-                fill_context(snapshot, Stage::pyramid, context);
-                auto& levels = context.levels;
-
-                // Check that loading the reference image preserves its bytes at level 0
-                const Tensor& image = snapshot.tensor(Stage::pyramid, 0, "src");
-                const std::vector<std::uint8_t> pixels = image.as<std::uint8_t>();
-                cpu::Backend::load(
-                    levels[0],
-                    {pixels.data(),
-                     snapshot.image_width(),
-                     snapshot.image_height(),
-                     snapshot.image_width()}
-                );
-                const Mismatch loaded =
-                    compare_plane<std::uint8_t>(image, levels[0].src_plane().as_const());
-                expect(loaded.exact()) << snapshot.problem() << describe(image, loaded);
-
-                for (std::uint32_t level = 1; level < levels.size(); ++level) {
-                    // Restore the finer level's reference input so resize errors cannot accumulate
-                    fill_level(snapshot, level - 1, Stage::pyramid, levels[level - 1]);
-                    cpu::Backend::pyramid(levels[level], levels[level - 1]);
-                    const Tensor& expected = snapshot.tensor(Stage::pyramid, level, "src");
-                    const Mismatch mismatch =
-                        compare_plane<std::uint8_t>(expected, levels[level].src_plane().as_const());
-                    expect(mismatch.exact()) << snapshot.problem() << describe(expected, mismatch);
-                }
+            write(
+                reference,
+                observe(context, stage),
+                stage,
+                output / (std::string(stage_name(stage)) + ".safetensors")
+            );
+            std::cout << "captured independently isolated " << stage_name(stage) << '\n';
+            if (stage == Stage::candidates) {
+                // Randomized fits may differ from a particular CUDA capture. Check
+                // their useful output through the real identification continuation.
+                auto tensors = observe(context, Stage::candidates);
+                cpu::Backend::markers(context, params);
+                tensors.merge(observe(context, Stage::markers));
+                write(reference, std::move(tensors), Stage::markers,
+                      output / "candidates-markers.safetensors");
             }
+        }
+        // The repeat reuses the context with a different OpenMP thread count
+        const int threads = omp_get_max_threads();
+        const std::pair<const char*, int> runs[] = {
+            {"full.safetensors", threads},
+            {"full-repeat.safetensors", threads == 1 ? 3 : 1},
         };
-
-        "gradient matches reference snapshot from reference pyramid planes"_test = [] {
-            for (const auto& file : snapshot_files_or_fail()) {
-                const ReferenceSnapshot snapshot = ReferenceSnapshot::read(file);
-                Context<cpu::Backend> context;
-                fill_context(snapshot, Stage::pyramid, context);
-                auto& levels = context.levels;
-                for (std::uint32_t level = 0; level < levels.size(); ++level) {
-                    cpu::Backend::gradient(levels[level]);
-                    const Tensor& dx = snapshot.tensor(Stage::gradient, level, "dx");
-                    const Tensor& dy = snapshot.tensor(Stage::gradient, level, "dy");
-                    const Mismatch dx_mismatch =
-                        compare_plane<std::int16_t>(dx, levels[level].dx_plane().as_const());
-                    const Mismatch dy_mismatch =
-                        compare_plane<std::int16_t>(dy, levels[level].dy_plane().as_const());
-                    expect(dx_mismatch.exact()) << snapshot.problem() << describe(dx, dx_mismatch);
-                    expect(dy_mismatch.exact()) << snapshot.problem() << describe(dy, dy_mismatch);
-                }
+        Context<cpu::Backend> full;
+        const auto pixels = reference.tensor(Stage::pyramid, 0, "src").as<std::uint8_t>();
+        const kernels::Plane<const std::uint8_t> image{
+            pixels.data(),
+            reference.image_width(),
+            reference.image_height(),
+            reference.image_width()
+        };
+        for (const auto& [name, thread_count] : runs) {
+            omp_set_num_threads(thread_count);
+            detect(full, image, params, nullptr);
+            Tensors tensors;
+            for (int i = 0; i < kStageCount; ++i) {
+                tensors.merge(observe(full, Stage(i)));
             }
-        };
-        "edges match reference snapshot from reference gradient planes"_test = [] {
-            for (const auto& file : snapshot_files_or_fail()) {
-                const ReferenceSnapshot snapshot = ReferenceSnapshot::read(file);
-                Context<cpu::Backend> context;
-                fill_context(snapshot, Stage::gradient, context);
-                const cctag::Parameters params(snapshot.crowns());
-                auto& levels = context.levels;
-                for (std::uint32_t level = 0; level < levels.size(); ++level) {
-                    cpu::Backend::edges(levels[level], params);
-                    const Tensor& edges = snapshot.tensor(Stage::edges, level, "edges");
-                    const Mismatch mismatch =
-                        compare_plane<std::uint8_t>(edges, levels[level].edges_plane().as_const());
-                    expect(mismatch.exact()) << snapshot.problem() << describe(edges, mismatch);
-                }
-            }
-        };
-        "edge points match reference snapshot from reference edges"_test = [] {
-            for (const auto& file : snapshot_files_or_fail()) {
-                const ReferenceSnapshot snapshot = ReferenceSnapshot::read(file);
-                Context<cpu::Backend> context;
-                fill_context(snapshot, Stage::edges, context);
-                auto& levels = context.levels;
-                for (std::uint32_t level = 0; level < levels.size(); ++level) {
-                    cpu::Backend::edge_points(levels[level]);
-                    const EdgePointsHost points = levels[level].edge_points_view();
-                    const Tensor& xy = snapshot.tensor(Stage::edge_points, level, "xy");
-                    const Tensor& gradients =
-                        snapshot.tensor(Stage::edge_points, level, "gradients");
-                    expect(eq(points.n, xy.shape[0])) << snapshot.problem() << "level" << level;
-                    const Mismatch xy_mismatch = compare_values<std::int32_t>(xy, points.xy);
-                    const Mismatch gradient_mismatch =
-                        compare_values<float>(gradients, points.gradients);
-                    expect(xy_mismatch.exact()) << snapshot.problem() << describe(xy, xy_mismatch);
-                    expect(gradient_mismatch.exact())
-                        << snapshot.problem() << describe(gradients, gradient_mismatch);
-                }
-            }
-        };
-        "linking matches reference snapshot from reference vote"_test = [] {
-            for (const auto& file : snapshot_files_or_fail()) {
-                const ReferenceSnapshot snapshot = ReferenceSnapshot::read(file);
-                Context<cpu::Backend> context;
-                fill_context(snapshot, Stage::vote, context);
-                const cctag::Parameters params(snapshot.crowns());
-                for (std::uint32_t level = 0; level < context.levels.size(); ++level) {
-                    cpu::Backend::linking(context.levels[level], params);
-                    const LinkingHost linking = context.levels[level].linking_view();
-                    const auto compare = [&](const char* name, auto values) {
-                        const Tensor& expected = snapshot.tensor(Stage::linking, level, name);
-                        const Mismatch mismatch = compare_values(expected, values);
-                        expect(mismatch.exact())
-                            << snapshot.problem() << describe(expected, mismatch);
-                    };
-                    compare("seeds", linking.seeds);
-                    compare("segments/offsets", linking.segment_offsets);
-                    compare("segments/values", linking.segment_values);
-                    compare("child_counts", linking.child_counts);
-                    compare("avg_vote", linking.avg_vote);
-                }
-            }
-        };
-        "vote matches reference snapshot from reference edge points"_test = [] {
-            for (const auto& file : snapshot_files_or_fail()) {
-                const ReferenceSnapshot snapshot = ReferenceSnapshot::read(file);
-                Context<cpu::Backend> context;
-                fill_context(snapshot, Stage::edge_points, context);
-                const cctag::Parameters params(snapshot.crowns());
-                for (std::uint32_t level = 0; level < context.levels.size(); ++level) {
-                    cpu::Backend::vote(context.levels[level], params);
-                    const VoteHost vote = context.levels[level].vote_view();
-                    const auto compare = [&](const char* name, auto values) {
-                        const Tensor& expected = snapshot.tensor(Stage::vote, level, name);
-                        const Mismatch mismatch = compare_values(expected, values);
-                        expect(mismatch.exact())
-                            << snapshot.problem() << describe(expected, mismatch);
-                    };
-                    compare("links", vote.links);
-                    compare("voters/offsets", vote.voters_offsets);
-                    compare("voters/values", vote.voters_values);
-                    compare("is_max", vote.is_max);
-                    compare("flow_length", vote.flow_length);
-                    compare("seeds", vote.seeds);
-                    compare("seed_order", vote.seed_order);
-                }
-            }
-        };
-    };
-    return cfg<override>.run({.argc = argc, .argv = argv});
+            write(reference, std::move(tensors), Stage::markers, output / name, true);
+        }
+        std::cout << "captured full pipeline; no numerical acceptance rule was applied\n";
+        return 0;
+    } catch (const std::exception& error) {
+        std::cerr << error.what() << '\n';
+        return 1;
+    }
 }

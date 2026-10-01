@@ -34,6 +34,7 @@ namespace cctag { namespace logtime { struct Mgmt; } };
 namespace cctag
 {
 
+class Probe;
 class Frame; // forward decl means cctag/*.cpp need not recompile for frame.h
 class NearbyPoint;
 class NearbyPointGrid;
@@ -44,7 +45,9 @@ class TagPipe
 
     int                         _tag_id;
     std::vector<Frame*>         _frame;
-    const cctag::Parameters&    _params;
+    // A copy, since the pipeline outlives the caller's parameters. CUDA
+    // allocations and constants are bound to this initial parameter set.
+    const cctag::Parameters     _params;
     TagThreads                  _threads;
     cudaStream_t                _tag_streams[NUM_ID_STREAMS];
     cudaEvent_t                 _uploaded_event;
@@ -60,6 +63,8 @@ public:
     void release( );
     void load( int frameId, unsigned char* pix );
     void tagframe( );
+    // Reports each level's planes and thinned edge points. Call after tagframe().
+    void probePyramid(Probe* probe);
     void handleframe( int layer );
 
     void convertToHost( size_t                          layer,

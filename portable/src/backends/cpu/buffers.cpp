@@ -11,16 +11,9 @@
 
 namespace cctag::portable::cpu {
 
-void Buffers::ensure(
-    std::uint32_t level_width,
-    std::uint32_t level_height,
-    std::uint32_t image_width,
-    std::uint32_t image_height
-) {
+void Buffers::ensure(std::uint32_t level_width, std::uint32_t level_height) {
     width = level_width;
     height = level_height;
-    input_width = image_width == 0 ? width : image_width;
-    input_height = image_height == 0 ? height : image_height;
     const int rows = static_cast<int>(height);
     const int cols = static_cast<int>(width);
 

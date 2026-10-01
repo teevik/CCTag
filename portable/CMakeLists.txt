@@ -38,7 +38,8 @@ function(cctag_portable_configure target)
   target_compile_features(${target} PRIVATE cxx_std_20)
   set_target_properties(${target} PROPERTIES CXX_EXTENSIONS OFF)
   if(NOT MSVC)
-    # Disable fused multiply-add to preserve exact reference snapshot comparisons
+    # Disable implicit FMA contraction so rounding does not depend on the compiler.
+    # Kernels call std::fma where they need a fused result.
     target_compile_options(${target} PRIVATE -ffp-contract=off -Wmisleading-indentation)
   endif()
   target_include_directories(${target} PRIVATE ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/src)
@@ -80,7 +81,6 @@ endif()
 # These suites validate the implemented CPU stages, not the empty SYCL scaffold.
 if(CCTAG_BUILD_TESTS AND CCTAG_PORTABLE_BACKEND STREQUAL "cpu")
   find_package(ut 2.3.1 REQUIRED CONFIG)
-  find_package(OpenSSL REQUIRED COMPONENTS Crypto)
 
   # Match the scalar OpenCV path used to produce the reference snapshots
   set(CCTAG_PORTABLE_OPENCV_CPU_DISABLE "AVX512_SKX,AVX2,FP16,AVX,SSE4_2,SSE4_1"
@@ -90,25 +90,26 @@ if(CCTAG_BUILD_TESTS AND CCTAG_PORTABLE_BACKEND STREQUAL "cpu")
     set(target portable_${name})
     add_executable(${target} ${ARGN})
     cctag_portable_configure(${target})
-    target_link_libraries(${target} PRIVATE CCTag Boost::ut opencv_imgproc OpenMP::OpenMP_CXX OpenSSL::Crypto)
+    target_link_libraries(${target} PRIVATE CCTag Boost::ut opencv_imgproc OpenMP::OpenMP_CXX)
     add_test(NAME ${target} COMMAND ${target})
     # Let OpenMP threads sleep between tasks to avoid spinning on tiny test images
     set_tests_properties(${target} PROPERTIES
         ENVIRONMENT "OPENCV_CPU_DISABLE=${CCTAG_PORTABLE_OPENCV_CPU_DISABLE};OMP_WAIT_POLICY=passive")
   endfunction()
 
-  # Give clangd a compile command for each header
+  # Headers with embedded unit tests. Compiling them also gives clangd a compile command.
   set(unit_test_headers
-      src/kernels/canny.hpp
-      src/kernels/gradient.hpp
+      src/kernels/frontend.hpp
       src/kernels/pcg32.hpp
-      src/kernels/thinning.hpp
+      src/host/candidates.hpp
       src/host/context.hpp
       src/host/detect.hpp)
   set_source_files_properties(${unit_test_headers} PROPERTIES LANGUAGE CXX)
   cctag_portable_add_test(unit
       ${unit_test_headers}
       src/host/ellipse.cpp
+      src/backends/cpu/pyramid.cpp
+      src/backends/cpu/gradient.cpp
       src/backends/cpu/edges.cpp
       src/backends/cpu/edge_points.cpp
       src/backends/cpu/vote.cpp
@@ -119,9 +120,18 @@ if(CCTAG_BUILD_TESTS AND CCTAG_PORTABLE_BACKEND STREQUAL "cpu")
       test/support/reference_snapshot.cpp)
   target_compile_definitions(portable_unit PRIVATE CCTAG_TEST)
 
-  # Keep stage-isolation tests separate so an unset snapshot directory only skips those tests
-  cctag_portable_add_test(stage_isolation
-      test/stage_isolation.cpp
+  # Contracts that need retained CUDA captures from CCTAG_REFERENCE_SNAPSHOTS. A separate
+  # test lets CTest skip it (exit code 77) when the captures are absent, without skipping
+  # the unit suite
+  cctag_portable_add_test(snapshot_contracts
+      test/snapshot_contracts.cpp
       test/support/reference_snapshot.cpp)
-  set_tests_properties(portable_stage_isolation PROPERTIES SKIP_RETURN_CODE 77)
+  set_tests_properties(portable_snapshot_contracts PROPERTIES SKIP_RETURN_CODE 77)
+
+  # Writes isolated-stage and full-pipeline snapshots for one CUDA reference capture.
+  # The thesis repository's snapshot comparator checks them, this target does not.
+  add_executable(portable_cuda_isolation test/stage_isolation.cpp test/support/reference_snapshot.cpp)
+  cctag_portable_configure(portable_cuda_isolation)
+  target_link_libraries(portable_cuda_isolation PRIVATE CCTag opencv_imgproc OpenMP::OpenMP_CXX)
+  install(TARGETS portable_cuda_isolation RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
 endif()

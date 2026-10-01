@@ -62,6 +62,11 @@ struct LinkingView
     const std::int32_t* child_point_counts;
     /// Voting score for each segment
     const float* vote_scores;
+    /// `segment_count + 1` offsets delimiting each segment's children in
+    /// `child_point_indices`, or null when the children are not reported
+    const std::int32_t* child_offsets = nullptr;
+    /// Child point indices in the order candidate fitting receives them
+    const std::int32_t* child_point_indices = nullptr;
 };
 
 struct CandidatesView
@@ -72,6 +77,30 @@ struct CandidatesView
     /// Pyramid level where each candidate marker was found
     const std::int32_t* pyramid_levels;
     const float* quality_scores;
+};
+
+/// Candidate markers as identification receives them, in detector order
+struct IdentificationInputsView
+{
+    std::uint32_t candidate_count;
+    /// `candidate_count` (x, y) pairs
+    const float* centers;
+    /// `candidate_count` (cx, cy, a, b, angle) groups of the rescaled outer ellipse
+    const float* ellipse_parameters;
+    /// `candidate_count` row-major 3x3 conic matrices of the rescaled outer ellipse
+    const float* ellipse_matrices;
+    /// `candidate_count` row-major 3x3 homographies
+    const float* homographies;
+    const float* scales;
+    const float* qualities;
+    /// Pyramid level where each candidate marker was found
+    const std::int32_t* levels;
+    const std::int32_t* ids;
+    const std::int32_t* statuses;
+    /// `candidate_count + 1` offsets delimiting each candidate's points in `directed_points`
+    const std::int32_t* point_offsets;
+    /// Rescaled outer ellipse points as (x, y, dx, dy) groups
+    const float* directed_points;
 };
 
 /// Detection candidates and their identification results
@@ -99,10 +128,14 @@ class Probe
     virtual void gradient(std::uint32_t pyramid_level, const Plane& gradient_x, const Plane& gradient_y) {}
     virtual void edges(std::uint32_t pyramid_level, const Plane& edges) {}
     virtual void edge_points(std::uint32_t pyramid_level, const EdgePointsView& edge_points) {}
+    /// Every edge point left by thinning. Only the CUDA pipeline reports this. `edge_points`
+    /// reports the points it exports to the host.
+    virtual void thinned_edge_points(std::uint32_t pyramid_level, const EdgePointsView& edge_points) {}
     virtual void vote(std::uint32_t pyramid_level, const VoteView& votes) {}
     virtual void linking(std::uint32_t pyramid_level, const LinkingView& linking) {}
     virtual void candidates(const CandidatesView& candidates) {}
     virtual void markers(const MarkersView& markers) {}
+    virtual void identification_inputs(const IdentificationInputsView& inputs) {}
 
     /// `enter`/`leave` mark the start/end of a named stage's work
     virtual void enter(const char* stage_name) {}

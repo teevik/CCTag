@@ -1,6 +1,7 @@
 # build folder
 build*/
 install*/
+__cmake_systeminformation/
 # NetBeans project folder
 nbproject
 # Result of the sample code

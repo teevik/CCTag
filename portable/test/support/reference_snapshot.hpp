@@ -8,7 +8,8 @@
 #ifndef CCTAG_PORTABLE_TEST_REFERENCE_SNAPSHOT_HPP
 #define CCTAG_PORTABLE_TEST_REFERENCE_SNAPSHOT_HPP
 
-// Reads reference snapshots, fills CPU stage buffers and compares stage outputs exactly
+// Reads reference captures and restores their stage outputs as inputs for later stages.
+// Stage outputs are compared by the thesis repository's snapshot comparator.
 
 #include "backends/cpu/backend.hpp"
 #include "host/context.hpp"
@@ -157,6 +158,13 @@ class ReferenceSnapshot {
     std::map<std::string, Tensor> tensor_entries;
 };
 
+/// Returns the parameters recorded in a replay capture's `effective_parameters`, or the
+/// defaults for the snapshot's crown count when it has no `replay_version`
+cctag::Parameters reference_parameters(const ReferenceSnapshot& snapshot);
+/// Sizes the context and fills level zero, then loads the captured identification inputs:
+/// candidate markers in capture order and the marker bank. Requires a replay capture.
+void fill_identification(const ReferenceSnapshot& snapshot, Context<cpu::Backend>& context);
+
 /// Returns the reference snapshot directory from `CCTAG_REFERENCE_SNAPSHOTS`
 /// Returns no value if the variable is unset or empty
 std::optional<std::filesystem::path> reference_snapshots_dir();
@@ -187,6 +195,8 @@ void copy_plane(const Tensor& reference, kernels::Plane<T> plane) {
 
 /// Fills one level's stage buffers with reference outputs through `upto`, inclusive
 /// Requires buffers sized by `Buffers::ensure` and supports stages through `linking`
+/// Throws if a restored index, offset or value is invalid. Replay captures supply the voter
+/// lists, children and loop-one order. Other captures have them rebuilt.
 void fill_level(
     const ReferenceSnapshot& snapshot,
     std::uint32_t level,
@@ -194,114 +204,9 @@ void fill_level(
     cpu::Buffers& buffers
 );
 
-/// Sizes the context using the reference snapshot's image dimensions and crown count
+/// Sizes the context using the snapshot's image dimensions and `reference_parameters`
 /// Fills each level through `upto`, inclusive, checking the level count and plane dimensions
 void fill_context(const ReferenceSnapshot& snapshot, Stage upto, Context<cpu::Backend>& context);
-
-/// Counts differing elements in an exact comparison
-struct Mismatch {
-    /// Number of elements compared
-    std::size_t total = 0;
-    /// Number of elements whose bytes differ
-    std::size_t count = 0;
-    /// Flat index of the first difference, valid when `count` is nonzero
-    std::size_t first = 0;
-
-    bool exact() const {
-        return count == 0;
-    }
-};
-
-/// Compares a host plane with a `[height, width]` tensor, checking each element's bytes
-template <class T>
-Mismatch compare_plane(const Tensor& reference, kernels::Plane<const T> plane) {
-    if (reference.shape.size() != 2 || reference.shape[0] != plane.height
-        || reference.shape[1] != plane.width) {
-        throw std::runtime_error(
-            reference.name + ": shape does not match the plane's " + std::to_string(plane.height)
-            + "x" + std::to_string(plane.width)
-        );
-    }
-    const std::vector<T> expected = reference.template as<T>();
-    Mismatch mismatch;
-    mismatch.total = expected.size();
-    for (std::uint32_t y = 0; y < plane.height; ++y) {
-        const T* row = plane.row(y);
-        for (std::uint32_t x = 0; x < plane.width; ++x) {
-            const std::size_t index = static_cast<std::size_t>(y) * plane.width + x;
-            if (std::memcmp(&row[x], &expected[index], sizeof(T)) != 0) {
-                if (mismatch.count == 0) {
-                    mismatch.first = index;
-                }
-                ++mismatch.count;
-            }
-        }
-    }
-    return mismatch;
-}
-
-/// Compares contiguous values with a tensor of the same element count, checking their bytes
-template <class T>
-Mismatch compare_values(const Tensor& reference, std::span<const T> values) {
-    if (reference.elements() != values.size()) {
-        throw std::runtime_error(
-            reference.name + ": " + std::to_string(reference.elements()) + " elements, got "
-            + std::to_string(values.size())
-        );
-    }
-    const std::vector<T> expected = reference.template as<T>();
-    Mismatch mismatch;
-    mismatch.total = expected.size();
-    for (std::size_t index = 0; index < expected.size(); ++index) {
-        if (std::memcmp(&values[index], &expected[index], sizeof(T)) != 0) {
-            if (mismatch.count == 0) {
-                mismatch.first = index;
-            }
-            ++mismatch.count;
-        }
-    }
-    return mismatch;
-}
-
-/// Describes the mismatch count and first differing index, adding `(y, x)` for a plane
-std::string describe(const Tensor& reference, const Mismatch& mismatch);
-
-/// Candidate comparison after canonicalization, quality-based deduplication and nearest pairing
-struct CandidateComparison {
-    bool passed = true;
-    bool pairs_passed = true;
-    /// Raw reference row indices retained through canonicalization and deduplication
-    std::vector<std::size_t> unmatched_reference;
-    std::size_t extra = 0;
-    float center_drift = 0;
-    float axis_drift = 0;
-    float angle_drift = 0;
-};
-
-/// Applies stage-snapshot's Rules::Tolerant candidate contract; rejects malformed views
-CandidateComparison compare_candidates(CandidatesHost reference, CandidatesHost candidate);
-std::string describe(const CandidateComparison& comparison);
-
-/// Canonical, metadata-independent hash used by stage-snapshot's snapshot_hash
-std::string snapshot_hash(const ReferenceSnapshot& snapshot);
-
-/// An externally reviewed allowance for one missing candidate in one snapshot and variant
-struct CandidateAllowance {
-    std::string variant;
-    std::string snapshot_hash;
-    std::size_t row;
-    std::int32_t level;
-    std::array<float, 5> ellipse;
-    std::string reason;
-
-    static CandidateAllowance read(const std::filesystem::path& file);
-    /// Requires the named row to be the only difference; keeps the raw comparison unchanged
-    bool allows(
-        const ReferenceSnapshot& reference,
-        const CandidateComparison& comparison,
-        std::string_view candidate_variant
-    ) const;
-};
 
 } // namespace cctag::portable::test
 

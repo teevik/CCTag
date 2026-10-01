@@ -1,7 +1,7 @@
 set(ACPP_TARGETS "generic" CACHE STRING "AdaptiveCpp compilation targets")
 find_package(AdaptiveCpp 25.10 REQUIRED CONFIG)
 
-# Only this translation unit needs the SYCL compiler; the public API stays host code.
+# Only this translation unit needs the SYCL compiler. The public API stays host code.
 add_library(cctag_sycl_stub OBJECT backend.cpp)
 cctag_portable_configure(cctag_sycl_stub)
 set_target_properties(cctag_sycl_stub PROPERTIES POSITION_INDEPENDENT_CODE ON)

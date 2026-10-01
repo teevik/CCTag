@@ -62,7 +62,7 @@ struct LinkingHost {
 };
 
 /// All per-level stage outputs for observation after linking, before candidates
-/// Borrows execution-backend storage; consume before mutating or reusing that level
+/// Borrows execution-backend storage, so consume it before mutating or reusing that level
 struct SnapshotViews {
     PyramidHost pyramid;
     GradientHost gradient;

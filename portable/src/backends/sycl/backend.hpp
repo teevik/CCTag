@@ -15,7 +15,7 @@
 namespace cctag::portable::sycl_backend {
 
 struct Buffers {
-    void ensure(std::uint32_t, std::uint32_t, std::uint32_t, std::uint32_t) {}
+    void ensure(std::uint32_t, std::uint32_t) {}
 };
 
 struct Backend {

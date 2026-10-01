@@ -55,11 +55,15 @@ void Backend::vote(Buffers& level, const Parameters& params) {
                 edge_map,
                 dx,
                 dy,
-                level.input_width,
-                level.input_height,
+                level.width,
+                level.height,
                 params._distSearch,
                 params._thrGradientMagInVote
             );
+        }
+        // As in CUDA, a point whose before descent fails stays out of the vote graph
+        if (level.links[2 * i] == -1) {
+            level.links[2 * i + 1] = -1;
         }
     }
 
@@ -101,17 +105,18 @@ void Backend::vote(Buffers& level, const Parameters& params) {
     for (int i = 0; i < n; ++i) {
         const auto begin = level.voters_offsets[i];
         const auto count = level.voters_offsets[i + 1] - begin;
-        level.flow_length[i] = kernels::gather_flow_length_at(
-            std::span<const std::int32_t>(level.voters_values).subspan(begin, count),
-            level.vote_distance
-        );
-        level.is_max[i] =
-            count > 0 && static_cast<std::size_t>(count) >= params._minVotesToSelectCandidate
-            ? count
-            : -1;
+        // Mean voter distance: one sum in canonical voter order, then one division.
+        // `is_max` holds the vote count, or -1 for a point outside the vote graph.
+        float sum = 0;
+        for (int j = begin; j < begin + count; ++j) {
+            sum += level.vote_distance[level.voters_values[j]];
+        }
+        level.flow_length[i] = count ? sum / count : 0;
+        level.is_max[i] = level.links[2 * i] == -1 ? -1 : count;
     }
     for (int i = 0; i < n; ++i) {
-        if (level.is_max[i] != -1) {
+        if (level.is_max[i] > 0
+            && std::size_t(level.is_max[i]) >= params._minVotesToSelectCandidate) {
             level.seeds.push_back(i);
         }
     }
@@ -132,53 +137,87 @@ namespace cctag::portable::tests::vote_stage {
 
 using namespace boost::ut;
 
+/// Builds a level whose row 0 crosses three crowns along a diameter, plus one voter that
+/// joins the diameter from below:
+///
+///     y=0  . . 0 . 1 . 2 . 3 . 4 . 5 . .
+///     y=4  . 6
+///
+/// Points 0..5 have alternating horizontal gradients, -1 at point 0. Point 6 has gradient
+/// (-3, 4), so its descent reaches point 1 at (4, 0) after 5 pixels.
+inline void build_diameter(cpu::Buffers& level) {
+    level.ensure(15, 6);
+    level.edges.setTo(0);
+    level.dx.setTo(0);
+    level.dy.setTo(0);
+    for (int i = 0; i < 6; ++i) {
+        level.edges(0, 2 + 2 * i) = 1;
+        level.dx(0, 2 + 2 * i) = i % 2 == 0 ? -1 : 1;
+    }
+    level.edges(4, 1) = 1;
+    level.dx(4, 1) = -3;
+    level.dy(4, 1) = 4;
+    cpu::Backend::edge_points(level);
+}
+
+inline cctag::Parameters diameter_params() {
+    cctag::Parameters params(3);
+    params._minVotesToSelectCandidate = 1;
+    params._ratioVoting = 3.f;
+    return params;
+}
+
 inline suite<"vote_stage"> vote_stage_suite = [] {
-    "vote gathers canonical voters and orders seeds by count then canonical index"_test = [] {
+    "vote links each point to its neighbours and collects the voters of each seed"_test = [] {
         cpu::Buffers level;
-        level.ensure(15, 6);
-        level.edges.setTo(0);
-        level.dx.setTo(0);
-        level.dy.setTo(0);
-        // Six equally spaced crossings, with alternating gradients along a diameter
-        for (int i = 0; i < 6; ++i) {
-            level.edges(0, 2 + 2 * i) = 255;
-            level.dx(0, 2 + 2 * i) = i % 2 == 0 ? -1 : 1;
-        }
-        // A second voter reaches (4, 0) along a 3-4-5 triangle, then follows the diameter
-        level.edges(4, 1) = 255;
-        level.dx(4, 1) = -3;
-        level.dy(4, 1) = 4;
-        cpu::Backend::edge_points(level);
-        cctag::Parameters params(3);
-        params._minVotesToSelectCandidate = 1;
-        params._ratioVoting = 3.f;
-        cpu::Backend::vote(level, params);
+        build_diameter(level);
+        cpu::Backend::vote(level, diameter_params());
         const VoteHost vote = level.vote_view();
+        // (before, after) neighbour of each point: against and along its gradient
         expect(
             std::ranges::equal(vote.links, std::array{1, -1, 0, 2, 3, 1, 2, 4, 5, 3, 4, -1, 1, -1})
         );
+        // Point 0 is voted for by 5, and point 5 by 0 and 6
         expect(std::ranges::equal(vote.voters_offsets, std::array{0, 1, 1, 1, 1, 1, 3, 3}));
         expect(std::ranges::equal(vote.voters_values, std::array{5, 0, 6}));
-        expect(std::ranges::equal(vote.is_max, std::array{1, -1, -1, -1, -1, 2, -1}));
-        // One flow has length 10; the other seed averages lengths 10 and 13
+        expect(std::ranges::equal(vote.is_max, std::array{1, 0, 0, 0, 0, 2, 0}));
+        // Flows 5 -> 0 and 0 -> 5 have length 10, and 6 -> 1 -> 5 has length 5 + 8 = 13
         expect(
             std::ranges::equal(vote.flow_length, std::array{10.f, 0.f, 0.f, 0.f, 0.f, 11.5f, 0.f})
         );
         expect(std::ranges::equal(vote.seeds, std::array{0, 5}));
+        // More votes come first
         expect(std::ranges::equal(vote.seed_order, std::array{5, 0}));
-        const auto* links_storage = vote.links.data();
-        const auto* voters_storage = vote.voters_values.data();
+    };
 
+    "seeds need at least the minimum vote count"_test = [] {
+        cpu::Buffers level;
+        build_diameter(level);
+        auto params = diameter_params();
         params._minVotesToSelectCandidate = 2;
         cpu::Backend::vote(level, params);
         expect(std::ranges::equal(level.vote_view().seeds, std::array{5}));
+    };
 
-        // The longer sub-segment fails the ratio check, leaving a tie between the two seeds
-        params._minVotesToSelectCandidate = 0;
+    "seeds with equal vote counts are ordered by canonical index"_test = [] {
+        cpu::Buffers level;
+        build_diameter(level);
+        auto params = diameter_params();
+        // Point 6's walk has sub-segments of 5, 2, 2, 2 and 2 pixels. Their ratio 2.5 is
+        // within a limit of 3 but not 2, so 6 no longer votes and both seeds have one vote.
         params._ratioVoting = 2.f;
         cpu::Backend::vote(level, params);
-        expect(std::ranges::equal(level.vote_view().seed_order, std::array{0, 5}));
         expect(std::ranges::equal(level.vote_view().voters_values, std::array{5, 0}));
+        expect(std::ranges::equal(level.vote_view().seed_order, std::array{0, 5}));
+    };
+
+    "a reused level without edge points has an empty vote graph and keeps its storage"_test = [] {
+        cpu::Buffers level;
+        build_diameter(level);
+        const auto params = diameter_params();
+        cpu::Backend::vote(level, params);
+        const auto* links_storage = level.vote_view().links.data();
+        const auto* voters_storage = level.vote_view().voters_values.data();
 
         level.edges.setTo(0);
         cpu::Backend::edge_points(level);
@@ -193,7 +232,12 @@ inline suite<"vote_stage"> vote_stage_suite = [] {
         expect(empty.seed_order.empty());
         expect(eq(empty.links.data(), links_storage));
         expect(eq(empty.voters_values.data(), voters_storage));
+    };
 
+    "vote rejects a nonzero voting angle"_test = [] {
+        cpu::Buffers level;
+        build_diameter(level);
+        auto params = diameter_params();
         params._angleVoting = 1.f;
         expect(throws<std::domain_error>([&] { cpu::Backend::vote(level, params); }));
     };
@@ -205,7 +249,7 @@ inline suite<"vote_stage"> vote_stage_suite = [] {
         level.dx.setTo(0);
         level.dy.setTo(0);
         for (int i = 0; i < 8; ++i) {
-            level.edges(0, 2 + 2 * i) = 255;
+            level.edges(0, 2 + 2 * i) = 1;
             level.dx(0, 2 + 2 * i) = i % 2 == 0 ? -1 : 1;
         }
         cpu::Backend::edge_points(level);
@@ -213,7 +257,7 @@ inline suite<"vote_stage"> vote_stage_suite = [] {
         params._minVotesToSelectCandidate = 1;
         cpu::Backend::vote(level, params);
         const VoteHost vote = level.vote_view();
-        // Only the two extremities cross all seven sub-segments; inner walks stop early
+        // Only the two extremities cross all seven sub-segments. Inner walks stop early.
         expect(std::ranges::equal(vote.seeds, std::array{0, 7}));
         expect(std::ranges::equal(vote.voters_values, std::array{7, 0}));
         expect(
@@ -224,7 +268,7 @@ inline suite<"vote_stage"> vote_stage_suite = [] {
         );
     };
 
-    "vote descent checks the previous pixel past a coarse level border"_test = [] {
+    "vote descent stops at the current level border"_test = [] {
         for (const bool vertical : {false, true}) {
             cpu::Buffers level;
             level.ensure(vertical ? 4 : 5, vertical ? 5 : 4);
@@ -233,20 +277,14 @@ inline suite<"vote_stage"> vote_stage_suite = [] {
             level.edges.setTo(0);
             const int x = vertical ? 1 : 2;
             const int y = vertical ? 2 : 1;
-            level.edges(y, x) = 255;
-            level.edges(level.height - 1, level.width - 1) = 255;
+            level.edges(y, x) = 1;
+            level.edges(level.height - 1, level.width - 1) = 1;
             level.dx(y, x) = vertical ? 1 : 2;
             level.dy(y, x) = vertical ? 2 : 1;
             cpu::Backend::edge_points(level);
             const cctag::Parameters params(3);
             cpu::Backend::vote(level, params);
             expect(eq(level.vote_view().links[1], -1));
-
-            // The third step passes the border, then looks back to the corner edge
-            level.input_width = 2 * level.width;
-            level.input_height = 2 * level.height;
-            cpu::Backend::vote(level, params);
-            expect(eq(level.vote_view().links[1], 1));
         }
     };
 };

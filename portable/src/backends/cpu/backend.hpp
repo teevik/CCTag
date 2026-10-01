@@ -20,16 +20,13 @@
 
 namespace cctag::portable::cpu {
 
-/// Maximum number of edge points in one pyramid level
-inline constexpr std::uint32_t kMaxEdgePoints = 1u << 24;
+/// Maximum number of edge points in one pyramid level, equal to CUDA's `EDGE_POINT_MAX`
+inline constexpr std::uint32_t kMaxEdgePoints = 1'000'000u;
 
 /// Holds one pyramid level's buffers
 struct Buffers {
     std::uint32_t width = 0;
     std::uint32_t height = 0;
-    /// Descent uses the input image's bounds at every pyramid level
-    std::uint32_t input_width = 0;
-    std::uint32_t input_height = 0;
 
     /// Source grayscale image
     cv::Mat1b src;
@@ -37,7 +34,9 @@ struct Buffers {
     cv::Mat1s dx;
     /// Vertical gradients
     cv::Mat1s dy;
-    /// Thinned edges, with raw Canny output on the border
+    /// Vertical filter pass of the separable gradient filter, reused for both axes
+    cv::Mat1f derivative_scratch;
+    /// Thinned edges, one at an edge pixel and zero elsewhere
     cv::Mat1b edges;
 
     /// Canonical index at each pixel, or -1 when no edge point is present
@@ -83,7 +82,7 @@ struct Buffers {
     /// Magnitudes and NMS classes, each with a zero border outside the image
     cv::Mat1i magnitude;
     cv::Mat1b nms_class;
-    /// First thinning pass, with a zero border inside the image
+    /// First thinning pass, with a cleared image border
     cv::Mat1b thinning;
     /// Pixels still to visit in the hysteresis flood
     std::vector<std::uint8_t*> hysteresis_stack;
@@ -94,12 +93,7 @@ struct Buffers {
     Buffers(const Buffers&) = delete;
     Buffers& operator=(const Buffers&) = delete;
 
-    void ensure(
-        std::uint32_t level_width,
-        std::uint32_t level_height,
-        std::uint32_t image_width = 0,
-        std::uint32_t image_height = 0
-    );
+    void ensure(std::uint32_t level_width, std::uint32_t level_height);
 
     kernels::Plane<std::uint8_t> src_plane() {
         return {src[0], width, height, src.step1()};
@@ -126,8 +120,8 @@ struct Backend {
 
     /// Copies the input grayscale image into `level0.src`
     static void load(Buffers& level0, kernels::Plane<const std::uint8_t> input);
-    /// Downsamples `finer.src` into `coarser.src` to build the next pyramid level
-    static void pyramid(Buffers& coarser, const Buffers& finer);
+    /// Resamples `level0.src` into `level.src` at this level's resolution
+    static void pyramid(Buffers& level, const Buffers& level0);
     /// Computes horizontal (`dx`) and vertical (`dy`) gradients from `src`
     static void gradient(Buffers& level);
     /// Finds and thins edges from `dx` and `dy`

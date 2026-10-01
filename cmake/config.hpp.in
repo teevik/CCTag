@@ -8,6 +8,10 @@
 
 #pragma once
 
+// Identify the exact source content and build configuration in capture metadata
+#define CCTAG_SOURCE_TREE_SHA256 "@CCTAG_SOURCE_TREE_SHA256@"
+#define CCTAG_BUILD_SETTINGS R"cctag(@CCTAG_BUILD_SETTINGS@)cctag"
+
 #define CCTAG_PIPELINE_NAME "@CCTAG_PIPELINE@"
 
 #ifndef CCTAG_SERIALIZE

@@ -245,11 +245,11 @@ static void cctagMultiresDetection_inner(
         std::sort(seeds.begin(), seeds.end(), receivedMoreVoteThan);
     }
     if (probe) probe->leave("vote");
-    if (probe) probeEdgePointsAndVote(probe, static_cast<std::uint32_t>(i), edgeCollection, seeds);
 
 #if defined(CCTAG_WITH_CUDA)
     } // not cuda_pipe
 #endif // defined(CCTAG_WITH_CUDA)
+    if (probe) probeEdgePointsAndVote(probe, static_cast<std::uint32_t>(i), edgeCollection, seeds);
 
 
     cctagDetectionFromEdges(

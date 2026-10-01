@@ -30,6 +30,11 @@ struct CandidateMarker {
     float scale = 1;
     float quality = 0;
     Eigen::Vector2f center = Eigen::Vector2f::Zero();
+    /// Starting homography for identification, and the id and status a marker
+    /// keeps when identification is disabled
+    Eigen::Matrix3f homography = Eigen::Matrix3f::Identity();
+    std::int32_t id = -1;
+    std::int32_t status = 0;
     Ellipse rescaled_outer_ellipse;
     std::vector<DirectedPoint> outer_points;
 };
@@ -103,6 +108,7 @@ struct CandidateSlot {
         label = -1;
         filtered_children.clear();
         outer_points.clear();
+        // Seed per slot so candidates draw independently and loops can run in parallel
         kernels::pcg32_seed(
             random,
             271828,
@@ -134,5 +140,50 @@ struct CandidateLevel {
 };
 
 } // namespace cctag::portable
+
+#ifdef CCTAG_TEST
+#include <boost/ut.hpp>
+
+namespace cctag::portable::tests::candidate_markers {
+
+using namespace boost::ut;
+
+inline suite<"candidate_markers"> candidate_markers_suite = [] {
+    "candidate markers keep their outer point storage when the count shrinks and grows"_test = [] {
+        CandidateMarker marker;
+        marker.quality = 7;
+        marker.outer_points = {{1, 2, 3, 4}, {5, 6, 7, 8}};
+        CandidateMarkers markers;
+        markers.push_back(marker);
+        markers.push_back(marker);
+        // A rebuilt vector would not keep this extra capacity
+        constexpr std::size_t capacity = 64;
+        for (auto& stored : markers.view()) {
+            stored.outer_points.reserve(capacity);
+        }
+
+        for (const std::size_t count : {1u, 0u}) {
+            markers.clear();
+            for (std::size_t i = 0; i < count; ++i) {
+                markers.push_back(marker);
+            }
+            expect(eq(markers.view().size(), count));
+
+            markers.clear();
+            markers.push_back(marker);
+            markers.push_back(marker);
+            expect(eq(markers.view().size(), 2u)) << fatal;
+            for (const auto& stored : markers.view()) {
+                expect(ge(stored.outer_points.capacity(), capacity));
+                expect(eq(stored.outer_points.size(), 2u)) << fatal;
+                expect(eq(stored.outer_points[1].x, 5.f));
+                expect(eq(stored.quality, 7.f));
+            }
+        }
+    };
+};
+
+} // namespace cctag::portable::tests::candidate_markers
+#endif // CCTAG_TEST
 
 #endif

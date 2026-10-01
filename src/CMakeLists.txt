@@ -322,6 +322,42 @@ configure_package_config_file("${PROJECT_SOURCE_DIR}/cmake/Config.cmake.in"
                               "${project_config}"
                               INSTALL_DESTINATION "${config_install_dir}")
 
+# CCTAG_SOURCE_TREE_SHA256 identifies the source content of this build, including
+# uncommitted changes: the SHA-256 of a manifest of `<relative path>:<SHA-256>` lines
+# sorted by path. CCTAG_BUILD_SETTINGS records the toolchain and build options.
+# The config header exposes both for snapshot metadata.
+file(GLOB_RECURSE cctag_provenance_files CONFIGURE_DEPENDS LIST_DIRECTORIES false RELATIVE "${PROJECT_SOURCE_DIR}"
+  "${PROJECT_SOURCE_DIR}/src/*" "${PROJECT_SOURCE_DIR}/cmake/*"
+  "${PROJECT_SOURCE_DIR}/portable/*" "${PROJECT_SOURCE_DIR}/CMakeLists.txt")
+list(SORT cctag_provenance_files)
+set(cctag_source_manifest "")
+foreach(source IN LISTS cctag_provenance_files)
+  set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${PROJECT_SOURCE_DIR}/${source}")
+  file(SHA256 "${PROJECT_SOURCE_DIR}/${source}" digest)
+  string(APPEND cctag_source_manifest "${source}:${digest}\n")
+endforeach()
+string(SHA256 CCTAG_SOURCE_TREE_SHA256 "${cctag_source_manifest}")
+string(TOUPPER "${CMAKE_BUILD_TYPE}" cctag_build_type_upper)
+string(JOIN ";" CCTAG_BUILD_SETTINGS
+  "compiler=${CMAKE_CXX_COMPILER_ID} ${CMAKE_CXX_COMPILER_VERSION}"
+  "compiler_path=${CMAKE_CXX_COMPILER}"
+  "simd_avx2=${CCTAG_ENABLE_SIMD_AVX2}"
+  "eigen_alignment=${CCTAG_EIGEN_MEMORY_ALIGNMENT}"
+  "serialize=${CCTAG_SERIALIZE}"
+  "visual_debug=${CCTAG_VISUAL_DEBUG}"
+  "thrust_disabled=${CCTAG_NO_THRUST_COPY_IF}"
+  "type=${CMAKE_BUILD_TYPE}"
+  "cxx=${CMAKE_CXX_FLAGS} ${CMAKE_CXX_FLAGS_${cctag_build_type_upper}}"
+  "nvcc=${CUDA_NVCC_FLAGS}"
+  "cuda=${CUDA_VERSION}"
+  "pipeline=${CCTAG_PIPELINE}"
+  "arch=${CCTAG_CUDA_CC_LIST}"
+  "opencv=${OpenCV_VERSION}"
+  "eigen=${EIGEN3_VERSION_STRING}"
+  "boost=${Boost_VERSION}"
+  "tbb=${TBB_VERSION}"
+)
+
 # config file
 configure_file("${PROJECT_SOURCE_DIR}/cmake/config.hpp.in" ${cctag_config_header_name} @ONLY)
 

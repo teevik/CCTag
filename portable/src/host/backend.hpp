@@ -25,19 +25,19 @@ struct Context;
 template <class B>
 concept ExecutionBackend = requires(
     typename B::Buffers& level,
-    const typename B::Buffers& finer,
+    const typename B::Buffers& level0,
     Context<B>& context,
     const Parameters& params,
     kernels::Plane<const std::uint8_t> input,
     std::uint32_t w,
     std::uint32_t h
 ) {
-    // Sizes this level's buffers, also retaining the input image's bounds for descent
-    { level.ensure(w, h, input.width, input.height) };
+    // Sizes this level's buffers
+    { level.ensure(w, h) };
     // Copies the input grayscale image into `level.src` at pyramid level 0
     { B::load(level, input) };
-    // Downsamples `finer.src` into `level.src` to build the next pyramid level
-    { B::pyramid(level, finer) };
+    // Resamples `level0.src` into `level.src` at this level's resolution
+    { B::pyramid(level, level0) };
     // Computes horizontal (`dx`) and vertical (`dy`) gradients from `src`
     { B::gradient(level) };
     // Finds and thins edges from `dx` and `dy`
@@ -53,7 +53,7 @@ concept ExecutionBackend = requires(
     // Identifies candidate markers, deduplicates them and stably sorts them by id
     { B::markers(context, params) };
     // Materialises all per-level stage outputs for observation after linking
-    // Views remain valid until the level is mutated; may wait and update staging buffers
+    // Views remain valid until the level is mutated. May wait and update staging buffers.
     { B::snapshot_views(level) } -> std::same_as<SnapshotViews>;
     // Waits for all previously submitted stages to finish
     { B::wait(context) };

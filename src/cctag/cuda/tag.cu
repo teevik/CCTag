@@ -6,6 +6,8 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/.
  */
 #include "tag.h"
+#include <cctag/Probe.hpp>
+#include <stdexcept>
 #include "frame.h"
 #include "frameparam.h"
 #include "debug_macros.hpp"
@@ -162,6 +164,39 @@ __host__
 void TagPipe::tagframe( )
 {
     _threads.oneRound( );
+}
+
+__host__
+void TagPipe::probePyramid(Probe* probe)
+{
+    for (std::size_t i = 0; i < _frame.size(); ++i) {
+        Frame& frame = *_frame[i];
+        // Source and derivative planes are already on the host. The edge plane
+        // is downloaded only for observation.
+        const cudaError_t result = cudaMemcpy2D(
+            frame._h_edges.data, frame._h_edges.step,
+            frame._d_edges.data, frame._d_edges.step,
+            frame.getWidth(), frame.getHeight(), cudaMemcpyDeviceToHost);
+        if (result != cudaSuccess) throw std::runtime_error(cudaGetErrorString(result));
+        const Plane source{frame.getWidth(), frame.getHeight(), frame._h_plane.step, frame._h_plane.data};
+        const Plane dx{frame.getWidth(), frame.getHeight(), frame._h_dx.step, frame._h_dx.data};
+        const Plane dy{frame.getWidth(), frame.getHeight(), frame._h_dy.step, frame._h_dy.data};
+        const Plane edges{frame.getWidth(), frame.getHeight(), frame._h_edges.step, frame._h_edges.data};
+        probe->pyramid(static_cast<std::uint32_t>(i), source);
+        probe->gradient(static_cast<std::uint32_t>(i), dx, dy);
+        probe->edges(static_cast<std::uint32_t>(i), edges);
+        std::vector<std::int32_t> xy;
+        std::vector<float> gradients;
+        for (int index = 0; index < frame._all_edgecoords.host.size; ++index) {
+            const short2 point = frame._all_edgecoords.host.ptr[index];
+            xy.push_back(point.x);
+            xy.push_back(point.y);
+            gradients.push_back(frame._h_dx.ptr(point.y)[point.x]);
+            gradients.push_back(frame._h_dy.ptr(point.y)[point.x]);
+        }
+        probe->thinned_edge_points(static_cast<std::uint32_t>(i), EdgePointsView{
+            static_cast<std::uint32_t>(frame._all_edgecoords.host.size), xy.data(), gradients.data()});
+    }
 }
 
 __host__

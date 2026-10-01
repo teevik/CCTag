@@ -36,8 +36,9 @@ class Probe;
  * @param[in] imgGraySrc Gray scale input image.
  * @param[in] providedParams Contains all the parameters.
  * @param[in] bank CCTag bank.
- * @param[in] bDisplayEllipses Optional object to store execution times.
- * @param[in] durations No longer used.
+ * @param[in] bDisplayEllipses No longer used.
+ * @param[in] durations Optional object to store execution times.
+ * @param[in] probe Optional observer of stage outputs and timing.
  */
 void cctagDetection(CCTag::List& markers,
                     int pipeId,
@@ -59,6 +60,14 @@ void cctagDetectionFromEdges(CCTag::List& markers,
                              const Parameters& providedParams,
                              logtime::Mgmt* durations,
                              Probe* probe = nullptr);
+
+/// Runs identification and overlap removal on caller-supplied candidate markers, as
+/// cctagDetection does after candidate generation. No earlier stage runs. With CUDA
+/// enabled, only `source` is uploaded to pipe `pipeId`. Throws if a parameter override
+/// is loaded.
+void replayIdentification(CCTag::List& markers, int pipeId, const cv::Mat& source,
+                          const Parameters& params,
+                          const std::vector<std::vector<float>>& bank, Probe* probe = nullptr);
 
 void createImageForVoteResultDebug(const cv::Mat& src, std::size_t nLevel);
 

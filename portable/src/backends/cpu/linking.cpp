@@ -190,6 +190,28 @@ namespace cctag::portable::tests::linking_stage {
 
 using namespace boost::ut;
 
+/// Builds a level of `width` edge points in one row, all with gradient (0, 1)
+inline void build_row(cpu::Buffers& level, int width) {
+    level.ensure(width, 1);
+    level.edges.setTo(1);
+    level.dx.setTo(0);
+    level.dy.setTo(1);
+    cpu::Backend::edge_points(level);
+}
+
+/// Builds a row of 32 points where seeds 0, 1 and 2 have 28, 1 and 2 voters, drawn in
+/// order from points 1 to 31
+inline void build_three_seeds(cpu::Buffers& level) {
+    build_row(level, 32);
+    level.voters_offsets.assign(33, 31);
+    level.voters_offsets[0] = 0;
+    level.voters_offsets[1] = 28;
+    level.voters_offsets[2] = 29;
+    level.voters_values.resize(31);
+    std::iota(level.voters_values.begin(), level.voters_values.end(), 1);
+    level.seed_order = {0, 2, 1};
+}
+
 inline suite<"linking_stage"> linking_stage_suite = [] {
     "loop one orders vote scores descending and ties by reverse acceptance order"_test = [] {
         cpu::Buffers level;
@@ -198,24 +220,35 @@ inline suite<"linking_stage"> linking_stage_suite = [] {
         level.dx.setTo(1);
         level.dy.setTo(0);
         for (int x = 0; x < 19; x += 2) {
-            level.edges(0, x) = 255;
+            level.edges(0, x) = 1;
         }
         cpu::Backend::edge_points(level);
-        // Isolated seeds receive 2, 1, 2, 3 and 1 votes; the other points are only voters
+        // Isolated seeds receive 2, 1, 2, 3 and 1 votes. The other points are only voters.
         level.voters_offsets = {0, 2, 3, 5, 8, 9, 9, 9, 9, 9, 9};
         level.voters_values = {1, 2, 0, 3, 4, 5, 6, 7, 8};
         level.seed_order = {3, 0, 2, 1, 4};
-        const cctag::Parameters params(3);
-        cpu::Backend::linking(level, params);
+        cpu::Backend::linking(level, cctag::Parameters(3));
         const LinkingHost linking = level.linking_view();
         expect(std::ranges::equal(linking.seeds, std::array{0, 1, 2, 3, 4}));
         expect(std::ranges::equal(linking.segment_values, std::array{0, 1, 2, 3, 4}));
+        // A segment scores votes^2 / length
         expect(std::ranges::equal(linking.avg_vote, std::array{4.f, 1.f, 4.f, 9.f, 1.f}));
+        // Seeds 0 and 2 tie on 4, and 2 was accepted later, so it comes first
         expect(level.loop_one_order == std::vector<std::int32_t>{3, 2, 0, 4, 1});
         expect(level.children_offsets == std::vector<std::int32_t>{0, 2, 3, 5, 8, 9});
         expect(level.children_values == level.voters_values);
+    };
 
-        // A reused level must expose empty CSRs after a frame with no seeds
+    "a reused level without seeds has no segments or children"_test = [] {
+        cpu::Buffers level;
+        build_row(level, 4);
+        level.voters_offsets = {0, 3, 3, 3, 3};
+        level.voters_values = {1, 2, 3};
+        level.seed_order = {0};
+        const cctag::Parameters params(3);
+        cpu::Backend::linking(level, params);
+        expect(eq(level.linking_view().c, 1u)) << fatal;
+
         level.seed_order.clear();
         cpu::Backend::linking(level, params);
         const LinkingHost empty = level.linking_view();
@@ -233,11 +266,8 @@ inline suite<"linking_stage"> linking_stage_suite = [] {
     "linking leaves the last angle window available when a walk reaches its length limit"_test =
         [] {
         cpu::Buffers level;
-        level.ensure(301, 1);
-        level.edges.setTo(255);
-        level.dx.setTo(0);
-        level.dy.setTo(1);
-        cpu::Backend::edge_points(level);
+        build_row(level, 301);
+        // Each point votes for itself, so every point is a valid segment member
         level.voters_offsets.resize(302);
         level.voters_values.resize(301);
         std::iota(level.voters_offsets.begin(), level.voters_offsets.end(), 0);
@@ -260,38 +290,41 @@ inline suite<"linking_stage"> linking_stage_suite = [] {
         params._windowSizeOnInnerEllipticSegment = 101;
         cpu::Backend::linking(level, params);
         expect(std::ranges::equal(level.linking_view().seeds, std::array{150, 230}));
+    };
+
+    "linking rejects an empty angle window"_test = [] {
+        cpu::Buffers level;
+        build_row(level, 4);
+        level.voters_offsets = {0, 0, 0, 0, 0};
+        level.voters_values.clear();
+        level.seed_order.clear();
+        cctag::Parameters params(3);
         params._windowSizeOnInnerEllipticSegment = 0;
         expect(throws<std::invalid_argument>([&] { cpu::Backend::linking(level, params); }));
     };
 
-    "linking gathers children at the vote maximum divided by fourteen"_test = [] {
+    "children are the voters of points with at least a fourteenth of the most votes"_test = [] {
         cpu::Buffers level;
-        level.ensure(32, 1);
-        level.edges.setTo(255);
-        level.dx.setTo(0);
-        level.dy.setTo(1);
-        cpu::Backend::edge_points(level);
-        level.voters_offsets.assign(33, 31);
-        level.voters_offsets[0] = 0;
-        level.voters_offsets[1] = 28;
-        level.voters_offsets[2] = 29;
-        level.voters_values.resize(31);
-        std::iota(level.voters_values.begin(), level.voters_values.end(), 1);
-        level.seed_order = {0, 2, 1};
+        build_three_seeds(level);
         cctag::Parameters params(3);
         cpu::Backend::linking(level, params);
         const LinkingHost linking = level.linking_view();
+        // One segment of the three voted points with 31 votes in total
         expect(std::ranges::equal(linking.seeds, std::array{0}));
+        expect(std::ranges::equal(linking.avg_vote, std::array{31.f * 31.f / 3.f}));
+        // The minimum is 28 / 14 = 2 votes: point 1's single voter is left out
         expect(std::ranges::equal(linking.child_counts, std::array{30}));
-        expect(std::ranges::equal(linking.avg_vote, std::array{961.f / 3.f}));
-        // Keep the row with two votes, exclude the row with only one
         std::vector<std::int32_t> children(28);
         std::iota(children.begin(), children.end(), 1);
         children.push_back(30);
         children.push_back(31);
         expect(level.children_values == children);
+    };
 
-        // A vote threshold stops growth without claiming the other seeds
+    "a minimum average vote stops growth without claiming the other seeds"_test = [] {
+        cpu::Buffers level;
+        build_three_seeds(level);
+        cctag::Parameters params(3);
         params._averageVoteMin = 29.f;
         cpu::Backend::linking(level, params);
         expect(std::ranges::equal(level.linking_view().seeds, std::array{0, 1, 2}));

@@ -205,4 +205,3 @@ cv::Mat* Frame::getEdges( ) const
 }
 
 }; // namespace cctag
-

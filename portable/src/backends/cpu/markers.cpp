@@ -34,6 +34,10 @@ constexpr int opti_has_diverged = -3;
 constexpr int id_not_reliable = -4;
 constexpr int degenerate = -5;
 
+/// Side of the center search grid, the only size CUDA's identification supports
+constexpr std::size_t kCenterGrid = 5;
+constexpr std::size_t kCenterGridPoints = kCenterGrid * kCenterGrid;
+
 /// Samples a point whose four neighbours are inside the plane
 float bilinear(Image image, float x, float y) {
     const int px = static_cast<int>(x), py = static_cast<int>(y);
@@ -223,67 +227,81 @@ bool homography_from_center(
     const auto point = project(ellipse.primal, center.x(), center.y());
     const float x = point.x(), y = point.y();
     const float q1 = ellipse.q1, q2 = ellipse.q2, q3 = ellipse.q3;
-    homography << q3, q2 * x * y, -q3 * x, 0.f, -q1 * x * x - q3, -q3 * y, -q1 * x, q2 * y, -q3;
+    const float x2 = x * x, y2 = y * y;
+    homography << q3, q2 * x * y, -q3 * x, 0.f, -q1 * x2 - q3, -q3 * y, -q1 * x, q2 * y, -q3;
     const std::array<float, 3> diagonal{
-        std::sqrt(q2 * q3 / q1 * (q1 * x * x + q2 * y * y + q3)),
+        std::sqrt((q2 * q3 * (1.f / q1)) * (q1 * x2 + q2 * y2 + q3)),
         q3,
-        std::sqrt(-q2 * (q1 * x * x + q3))
+        std::sqrt(-q2 * (q1 * x2 + q3))
     };
     for (int i = 0; i < 3; ++i) {
         for (int j = 0; j < 3; ++j) {
             homography(i, j) *= diagonal[j];
         }
     }
-    homography = ellipse.dual * homography;
+    homography = (ellipse.dual * homography).eval();
     return homography.allFinite();
 }
 
-void rectify_cuts(
+/// Resamples each selected cut through the homography. A sample outside the image
+/// marks its cut out of bounds. Returns false when the homography is not invertible
+/// or any selected cut is out of bounds.
+bool rectify_cuts(
     Image image,
     const Eigen::Matrix3f& homography,
     float begin,
     IdentificationScratch& scratch
 ) {
     const Eigen::Matrix3f inverse = homography.inverse();
+    if (!inverse.allFinite()) {
+        return false;
+    }
+    bool all_inside = true;
     for (const auto index : scratch.selected) {
         auto& cut = scratch.cuts[index];
+        cut.out_of_bounds = false;
         const auto stop = project(inverse, cut.stop.x, cut.stop.y);
         const Eigen::Vector2f start = stop * begin;
-        const float step_x = (stop.x() - start.x()) / (cut.signal.size() - 1.f);
-        const float step_y = (stop.y() - start.y()) / (cut.signal.size() - 1.f);
-        float x = start.x(), y = start.y();
+        const Eigen::Vector2f step = (stop - start) / (cut.signal.size() - 1.f);
+        Eigen::Vector2f position = start;
         for (float& value : cut.signal) {
-            const auto point = project(homography, x, y);
-            if (point.x() >= 0.f && point.x() < image.width - 1.f && point.y() >= 0.f
-                && point.y() < image.height - 1.f) {
+            const auto point = project(homography, position.x(), position.y());
+            if (point.allFinite() && point.x() >= 0.f && point.x() < image.width - 1.f
+                && point.y() >= 0.f && point.y() < image.height - 1.f) {
                 value = bilinear(image, point.x(), point.y());
             } else {
-                // Once a search point leaves the image, the legacy keeps that cut excluded
                 cut.out_of_bounds = true;
+                all_inside = false;
             }
-            x += step_x;
-            y += step_y;
+            position += step;
         }
     }
+    return all_inside;
 }
 
-float cut_cost(IdentificationScratch& scratch) {
-    float residual = 0;
-    std::size_t pairs = 0;
-    for (std::size_t i = 0; i < scratch.selected.size(); ++i) {
-        const auto& left = scratch.cuts[scratch.selected[i]];
-        for (std::size_t j = i + 1; j < scratch.selected.size(); ++j) {
-            const auto& right = scratch.cuts[scratch.selected[j]];
-            if (left.out_of_bounds || right.out_of_bounds) {
-                continue;
-            }
-            for (std::size_t k = 0; k < left.signal.size(); ++k) {
-                residual += std::pow(left.signal[k] - right.signal[k], 2);
-            }
-            ++pairs;
+float signal_squared_distance(std::span<const float> left, std::span<const float> right) {
+    float sum = 0;
+    for (std::size_t i = 0; i < left.size(); ++i) {
+        const float difference = left[i] - right[i];
+        sum += difference * difference;
+    }
+    return sum;
+}
+
+/// Mean pairwise squared distance between the selected cuts' signals
+float cut_cost(const IdentificationScratch& scratch) {
+    float total = 0;
+    std::size_t count = 0;
+    for (std::size_t left = 1; left < scratch.selected.size(); ++left) {
+        for (std::size_t right = 0; right < left; ++right) {
+            total += signal_squared_distance(
+                scratch.cuts[scratch.selected[left]].signal,
+                scratch.cuts[scratch.selected[right]].signal
+            );
+            ++count;
         }
     }
-    return pairs == 0 ? std::numeric_limits<float>::max() : residual / pairs;
+    return count ? total / count : std::numeric_limits<float>::max();
 }
 
 bool refine_center(
@@ -296,12 +314,13 @@ bool refine_center(
 ) {
     const auto& ellipse = marker.outer_ellipse;
     const auto canonical = canonical_form(ellipse);
-    const float mean_axis = (ellipse.a + ellipse.b) / 2.f;
+    // Centres the ellipse and scales by half the product of its semi-axes, as CUDA's
+    // makeConditionerFromEllipse does
+    const float scale = (ellipse.a * ellipse.b) / 2.f;
     const float sqrt2 = std::sqrt(2.f);
     Eigen::Matrix3f conditioner;
-    // The scale belongs to this ellipse; the legacy's static mean axis depends on the first call
-    conditioner << sqrt2 / mean_axis, 0.f, -sqrt2 * ellipse.cx / mean_axis, 0.f, sqrt2 / mean_axis,
-        -sqrt2 * ellipse.cy / mean_axis, 0.f, 0.f, 1.f;
+    conditioner << sqrt2 / scale, 0.f, -sqrt2 * ellipse.cx / scale, 0.f, sqrt2 / scale,
+        -sqrt2 * ellipse.cy / scale, 0.f, 0.f, 1.f;
     const Eigen::Matrix3f inverse = conditioner.inverse();
     Ellipse conditioned;
     if (!conditioned.set_conic(inverse.transpose() * ellipse.conic * inverse)) {
@@ -309,22 +328,17 @@ bool refine_center(
     }
     float neighbour_size = params._imagedCenterNeighbourSize;
     const auto grid = params._imagedCenterNGridSample;
-    if (neighbour_size * std::max(ellipse.a, ellipse.b) <= 0.02) {
-        if (!homography_from_center(canonical, marker.center, marker.homography)) {
-            return false;
-        }
-        rectify_cuts(image, marker.homography, begin, scratch);
-        residual = cut_cost(scratch);
-    }
     while (neighbour_size * std::max(ellipse.a, ellipse.b) > 0.02) {
         const float width = neighbour_size * std::max(conditioned.a, conditioned.b);
         const float half_width = width / 2.f;
         const float step = width / (grid - 1);
         const Eigen::Vector3f center =
             conditioner * Eigen::Vector3f(marker.center.x(), marker.center.y(), 1.f);
-        float minimum = std::numeric_limits<float>::max();
-        Eigen::Vector2f best_center = marker.center;
-        Eigen::Matrix3f best_homography = marker.homography;
+        // Grid points are stored in CUDA's order, j * grid + i. The first minimum wins a tie.
+        std::array<float, kCenterGridPoints> costs;
+        costs.fill(std::numeric_limits<float>::max());
+        std::array<Eigen::Vector2f, kCenterGridPoints> centers;
+        std::array<Eigen::Matrix3f, kCenterGridPoints> homographies;
         for (std::size_t i = 0; i < grid; ++i) {
             for (std::size_t j = 0; j < grid; ++j) {
                 const Eigen::Vector3f point = inverse
@@ -336,21 +350,24 @@ bool refine_center(
                 if (!homography_from_center(canonical, image_point, homography)) {
                     continue;
                 }
-                rectify_cuts(image, homography, begin, scratch);
-                const float cost = cut_cost(scratch);
-                if (cost < minimum) {
-                    minimum = cost;
-                    best_center = image_point;
-                    best_homography = homography;
-                }
+                const auto index = j * grid + i;
+                centers[index] = image_point;
+                homographies[index] = homography;
+                const float cost = rectify_cuts(image, homography, begin, scratch)
+                    ? cut_cost(scratch)
+                    : std::numeric_limits<float>::max();
+                costs[index] = std::isfinite(cost) ? cost : std::numeric_limits<float>::max();
             }
         }
-        residual = minimum;
-        if (minimum == std::numeric_limits<float>::max()) {
+        const auto best = static_cast<std::size_t>(
+            std::min_element(costs.begin(), costs.begin() + grid * grid) - costs.begin()
+        );
+        if (costs[best] == std::numeric_limits<float>::max()) {
             return false;
         }
-        marker.center = best_center;
-        marker.homography = best_homography;
+        residual = costs[best];
+        marker.center = centers[best];
+        marker.homography = homographies[best];
         neighbour_size /= float((grid - 1) / 2);
     }
     rectify_cuts(image, marker.homography, begin, scratch);
@@ -475,10 +492,12 @@ void identify(
 ) {
     marker = {};
     marker.center = candidate.center;
+    marker.homography = candidate.homography;
+    marker.id = candidate.id;
     marker.outer_ellipse = candidate.rescaled_outer_ellipse;
     marker.quality = candidate.quality;
     if (!params._doIdentification) {
-        marker.status = 0;
+        marker.status = candidate.status;
         return;
     }
     const float begin = params._nCrowns == 3 ? 1 - (2 * params._nCrowns - 1) * 0.15f : 0.26f;
@@ -521,7 +540,7 @@ void update(std::vector<Marker>& markers, const Marker& marker) {
 void Backend::markers(Context<Backend>& context, const Parameters& params) {
     if (params._doIdentification
         && (params._sampleCutLength <= 30 || params._numSamplesOuterEdgePointsRefinement < 2
-            || params._imagedCenterNGridSample < 5 || params._imagedCenterNGridSample % 2 == 0
+            || params._imagedCenterNGridSample != kCenterGrid
             || !(params._imagedCenterNeighbourSize > 0)
             || !std::isfinite(params._imagedCenterNeighbourSize))) {
         throw std::invalid_argument("markers: invalid cut sampling or center search parameters");
@@ -634,7 +653,7 @@ suite<"markers_stage"> markers_suite = [] {
         expect(view.xy.empty() && view.ids.empty() && view.statuses.empty());
     };
 
-    "markers reject unreadable outer points without retaining earlier cuts"_test = [] {
+    "markers report each cut failure on a reused context without stale cuts"_test = [] {
         Context<Backend> context;
         const Parameters params(3);
         context.ensure(32, 32, params);
@@ -648,16 +667,21 @@ suite<"markers_stage"> markers_suite = [] {
             candidate.outer_points.push_back({16 + 6 * x, 16 + 6 * y, x, y});
         }
         context.candidate_markers.push_back(candidate);
+        // A black image gives constant cuts, which fail the variance gate
         Backend::markers(context, params);
-        expect(eq(context.markers.front().status, -2)); // Constant cuts fail the variance gate
+        expect(eq(context.markers.front().status, no_selected_cuts));
+
+        // Moving the points off the image leaves no cut to collect
         for (auto& point : context.candidate_markers.view().front().outer_points) {
             point.x += 100;
         }
         Backend::markers(context, params);
-        expect(eq(context.markers.front().status, -1)); // All cuts leave the image
+        expect(eq(context.markers.front().status, no_collected_cuts));
+
+        // Five outer points are needed to cut at all
         context.candidate_markers.view().front().outer_points.resize(4);
         Backend::markers(context, params);
-        expect(eq(context.markers.front().status, -1)); // Too few outer points
+        expect(eq(context.markers.front().status, no_collected_cuts));
     };
 
     "markers reject search parameters that cannot sample or shrink"_test = [] {

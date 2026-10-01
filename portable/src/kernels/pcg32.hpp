@@ -46,7 +46,7 @@ inline std::uint32_t pcg32_bounded(Pcg32& random, std::uint32_t bound) {
     }
 }
 
-/// Draws five distinct indices in draw order; count must be at least five
+/// Draws five distinct indices in draw order. `count` must be at least five.
 inline std::array<std::int32_t, 5> rand_5_k(Pcg32& random, std::uint32_t count) {
     std::array<std::int32_t, 5> indices;
     for (int i = 0; i < 5; ++i) {
@@ -85,7 +85,8 @@ inline suite<"pcg32"> pcg32_suite = [] {
     "bounded draws reject the biased tail and retain the candidate stream"_test = [] {
         kernels::Pcg32 random;
         kernels::pcg32_seed(random, 271828, (std::uint64_t{3} << 32) | 42);
-        // A bound just above 2^31 rejects about half the draws; values from the legacy generator
+        // A bound just above 2^31 rejects about half the draws. Expected values are from
+        // bounded_rand in src/cctag/utils/pcg_random.hpp.
         for (const auto expected : {356052018u, 760635042u, 314693708u, 641323914u, 1797617292u}) {
             expect(eq(kernels::pcg32_bounded(random, 0x80000001u), expected));
         }

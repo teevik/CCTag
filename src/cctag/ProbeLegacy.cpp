@@ -112,6 +112,7 @@ void probeLinking(Probe* probe,
     std::vector<std::int32_t> segmentValues;
     std::vector<std::int32_t> childCounts;
     std::vector<float> averageVote;
+    std::vector<std::int32_t> childOffsets{0}, childValues;
 
     seeds.reserve(candidates.size());
     segmentOffsets.reserve(candidates.size() + 1);
@@ -131,6 +132,8 @@ void probeLinking(Probe* probe,
         std::list<EdgePoint*> children;
         childrenOf(edgeCollection, candidate->_convexEdgeSegment, children);
         childCounts.push_back(static_cast<std::int32_t>(children.size()));
+        for (const EdgePoint* child : children) childValues.push_back(edgeCollection(child));
+        childOffsets.push_back(static_cast<std::int32_t>(childValues.size()));
         averageVote.push_back(candidate->_averageReceivedVote);
     }
 
@@ -140,7 +143,7 @@ void probeLinking(Probe* probe,
                                segmentOffsets.data(),
                                segmentValues.data(),
                                childCounts.data(),
-                               averageVote.data()});
+                               averageVote.data(), childOffsets.data(), childValues.data()});
 }
 
 void probeCandidates(Probe* probe, const CCTag::List& candidates)
@@ -168,6 +171,33 @@ void probeCandidates(Probe* probe, const CCTag::List& candidates)
 
     probe->candidates(
       CandidatesView{static_cast<std::uint32_t>(candidates.size()), ellipses.data(), levels.data(), quality.data()});
+
+    std::vector<float> centers, matrices, homographies, scales, points;
+    std::vector<std::int32_t> ids, statuses, offsets{0};
+    for (const CCTag& candidate : candidates) {
+        centers.push_back(candidate.x());
+        centers.push_back(candidate.y());
+        for (int row = 0; row < 3; ++row) {
+            for (int col = 0; col < 3; ++col) {
+                matrices.push_back(candidate.rescaledOuterEllipse().matrix()(row, col));
+                homographies.push_back(candidate.homography()(row, col));
+            }
+        }
+        scales.push_back(candidate.scale());
+        ids.push_back(candidate.id());
+        statuses.push_back(candidate.getStatus());
+        for (const auto& point : candidate.rescaledOuterEllipsePoints()) {
+            points.push_back(point.x());
+            points.push_back(point.y());
+            points.push_back(point.dX());
+            points.push_back(point.dY());
+        }
+        offsets.push_back(static_cast<std::int32_t>(points.size() / 4));
+    }
+    probe->identification_inputs(IdentificationInputsView{
+        static_cast<std::uint32_t>(candidates.size()), centers.data(), ellipses.data(),
+        matrices.data(), homographies.data(), scales.data(), quality.data(), levels.data(),
+        ids.data(), statuses.data(), offsets.data(), points.data()});
 }
 
 void probeMarkers(Probe* probe, const CCTag::List& markers)
