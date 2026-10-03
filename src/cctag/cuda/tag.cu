@@ -7,6 +7,7 @@
  */
 #include "tag.h"
 #include "frame.h"
+#include "cctag/Probe.hpp"
 #include "frameparam.h"
 #include "debug_macros.hpp"
 #include "keep_time.hpp"
@@ -162,6 +163,31 @@ __host__
 void TagPipe::tagframe( )
 {
     _threads.oneRound( );
+}
+
+__host__
+void TagPipe::probePyramid( Probe& probe )
+{
+    for( size_t i = 0; i < _frame.size(); ++i ) {
+        Frame& frame = *_frame[i];
+
+        // The source and gradient images were downloaded by handleframe().
+        // The edge image normally stays on the device.
+        cudaError_t err = cudaMemcpy2D( frame._h_edges.data, frame._h_edges.step,
+                                        frame._d_edges.data, frame._d_edges.step,
+                                        frame._d_edges.cols,
+                                        frame._d_edges.rows,
+                                        cudaMemcpyDeviceToHost );
+        POP_CUDA_FATAL_TEST( err, "Cannot download the edge image: " );
+
+        const uint32_t w = frame.getWidth();
+        const uint32_t h = frame.getHeight();
+        probe.pyramid( i, Plane{ w, h, frame._h_plane.step, frame._h_plane.data } );
+        probe.gradient( i,
+                        Plane{ w, h, frame._h_dx.step, frame._h_dx.data },
+                        Plane{ w, h, frame._h_dy.step, frame._h_dy.data } );
+        probe.edges( i, Plane{ w, h, frame._h_edges.step, frame._h_edges.data } );
+    }
 }
 
 __host__

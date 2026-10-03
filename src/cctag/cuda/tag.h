@@ -35,6 +35,7 @@ namespace cctag
 {
 
 class Frame; // forward decl means cctag/*.cpp need not recompile for frame.h
+class Probe;
 class NearbyPoint;
 class NearbyPointGrid;
 
@@ -60,6 +61,8 @@ public:
     void release( );
     void load( int frameId, unsigned char* pix );
     void tagframe( );
+    /// Reports the images of every pyramid level. Call after tagframe().
+    void probePyramid( Probe& probe );
     void handleframe( int layer );
 
     void convertToHost( size_t                          layer,

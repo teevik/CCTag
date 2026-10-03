@@ -57,6 +57,7 @@ set( CCTag_HEADERS
         ./cctag/Level.hpp
         ./cctag/Multiresolution.hpp
         ./cctag/Params.hpp
+        ./cctag/Probe.hpp
         ./cctag/Statistic.hpp
         ./cctag/SubPixEdgeOptimizer.hpp
         ./cctag/Types.hpp

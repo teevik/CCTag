@@ -22,6 +22,8 @@ namespace logtime {
 struct Mgmt;
 }
 
+class Probe;
+
 using MarkerID = int;
 static constexpr MarkerID UndefinedMarkerID{-1};
 
@@ -121,6 +123,7 @@ void cctagDetection(boost::ptr_list<ICCTag>& markers,
  * @param[in] durations Optional object to store execution times.
  * @param[in] pBank Path to the cctag bank. If not provided, radii will be the ones associated to the CCTags contained
  * in the markersToPrint folder.
+ * @param[in] probe Optional observer of the intermediate results.
  */
 void cctagDetection(boost::ptr_list<ICCTag>& markers,
                     int pipeId,
@@ -128,7 +131,8 @@ void cctagDetection(boost::ptr_list<ICCTag>& markers,
                     const cv::Mat& graySrc,
                     const cctag::Parameters& params,
                     logtime::Mgmt* durations = nullptr,
-                    const CCTagMarkersBank* pBank = nullptr);
+                    const CCTagMarkersBank* pBank = nullptr,
+                    Probe* probe = nullptr);
 
 }
 

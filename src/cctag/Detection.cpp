@@ -19,6 +19,7 @@
 #include <cctag/geometry/EllipseFromPoints.hpp>
 #include <cctag/CCTag.hpp>
 #include <cctag/Identification.hpp>
+#include <cctag/Probe.hpp>
 #include <cctag/Fitting.hpp>
 #include <cctag/Types.hpp>
 #include <cctag/Canny.hpp>
@@ -759,6 +760,30 @@ cctag::TagPipe* initCuda( int      pipeId,
 }
 #endif // CCTAG_WITH_CUDA
 
+namespace {
+
+Plane plane( const cv::Mat & image )
+{
+    return Plane{ static_cast<std::uint32_t>(image.cols),
+                  static_cast<std::uint32_t>(image.rows),
+                  image.step,
+                  image.data };
+}
+
+/// Reports the images of every level of a pyramid built on the CPU.
+void probePyramid( Probe & probe, const ImagePyramid & imagePyramid )
+{
+    for( std::size_t i = 0; i < imagePyramid.getNbLevels(); ++i ) {
+        const Level & level = *imagePyramid.getLevel(i);
+        const std::uint32_t index = static_cast<std::uint32_t>(i);
+        probe.pyramid( index, plane(level.getSrc()) );
+        probe.gradient( index, plane(level.getDx()), plane(level.getDy()) );
+        probe.edges( index, plane(level.getEdges()) );
+    }
+}
+
+} // namespace
+
 /**
  * @brief Perform the CCTag detection on a gray scale image
  * 
@@ -777,7 +802,8 @@ void cctagDetection(
         const Parameters & providedParams,
         const cctag::CCTagMarkersBank & bank,
         bool bDisplayEllipses,
-        cctag::logtime::Mgmt* durations )
+        cctag::logtime::Mgmt* durations,
+        Probe* probe )
 
 {
     using namespace cctag;
@@ -826,6 +852,8 @@ void cctagDetection(
         pipe1->tagframe( );
 
         if( durations ) durations->log( "after CUDA stages" );
+
+        if( probe ) pipe1->probePyramid( *probe );
     } else { // not params.useCuda
 #endif // CCTAG_WITH_CUDA
 
@@ -833,6 +861,8 @@ void cctagDetection(
                             params._cannyThrLow,
                             params._cannyThrHigh,
                             &params );
+
+        if( probe ) probePyramid( *probe, imagePyramid );
 
 #ifdef CCTAG_WITH_CUDA
     } // not params.useCuda

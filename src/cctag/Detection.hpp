@@ -24,6 +24,7 @@ namespace cctag {
 
 class EdgePoint;
 class EdgePointImage;
+class Probe;
 
 /**
  * @brief Perform the CCTag detection on a gray scale image. Cf. application/detection/main.cpp for example of usage.
@@ -37,6 +38,7 @@ class EdgePointImage;
  * @param[in] bank CCTag bank.
  * @param[in] bDisplayEllipses Optional object to store execution times.
  * @param[in] durations No longer used.
+ * @param[in] probe Optional observer of the intermediate results.
  */
 void cctagDetection(CCTag::List& markers,
                     int pipeId,
@@ -45,7 +47,8 @@ void cctagDetection(CCTag::List& markers,
                     const Parameters& providedParams,
                     const cctag::CCTagMarkersBank& bank,
                     bool bDisplayEllipses = true,
-                    logtime::Mgmt* durations = nullptr);
+                    logtime::Mgmt* durations = nullptr,
+                    Probe* probe = nullptr);
 
 void cctagDetectionFromEdges(CCTag::List& markers,
                              EdgePointCollection& edgeCollection,
