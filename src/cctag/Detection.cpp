@@ -28,6 +28,9 @@
 #ifdef CCTAG_WITH_CUDA
 #include "cctag/cuda/tag.h"
 #endif
+#ifdef CCTAG_WITH_SYCL
+#include "portable/Pipeline.hpp"
+#endif
 
 #include <boost/math/constants/constants.hpp>
 #include <boost/math/special_functions/round.hpp>
@@ -825,6 +828,10 @@ void cctagDetection(
                                imgGraySrc.rows,
                                params._numberOfProcessedMultiresLayers,
                                cuda_allocates );
+
+#ifdef CCTAG_WITH_SYCL
+    static portable::Pipeline portablePipeline;
+#endif
 
     cctag::TagPipe* pipe1 = nullptr;
 #ifdef CCTAG_WITH_CUDA

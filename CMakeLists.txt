@@ -18,6 +18,7 @@ option(CCTAG_SERIALIZE "Store all the output" OFF)
 option(CCTAG_VISUAL_DEBUG "Enable visual debug" OFF)
 option(CCTAG_NO_COUT "Disable output stream" ON)
 option(CCTAG_WITH_CUDA "Compile the library with CUDA support" ON)
+option(CCTAG_WITH_SYCL "Compile the library with the portable SYCL pipeline" OFF)
 option(CCTAG_BUILD_APPS "Build the sample applications" ON)
 option(CCTAG_CUDA_CC_CURRENT_ONLY "Set to on to build only for the current machine's CC" OFF)
 option(CCTAG_NVCC_WARNINGS "Switch on several additional warnings for CUDA nvcc." OFF)
@@ -31,6 +32,10 @@ option(CCTAG_NO_THRUST_COPY_IF "Do not use thrust::copy_if() on GPU. There may b
 option(BUILD_SHARED_LIBS "Build shared libraries" ON)
 
 set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} "${PROJECT_SOURCE_DIR}/cmake")
+
+if(CCTAG_WITH_SYCL AND CCTAG_WITH_CUDA)
+  message(FATAL_ERROR "CCTAG_WITH_SYCL and CCTAG_WITH_CUDA cannot both be enabled")
+endif()
 
 # set(CMAKE_BUILD_TYPE Debug)
 if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
@@ -252,6 +257,10 @@ message(STATUS "Found TBB: version ${TBB_VERSION}")
 
 add_subdirectory(src)
 
+if(CCTAG_WITH_SYCL)
+  add_subdirectory(portable)
+endif()
+
 if(CCTAG_BUILD_DOC)
  add_subdirectory(doc)
 endif()
@@ -278,6 +287,7 @@ message(STATUS "Build applications: " ${CCTAG_BUILD_APPS})
 message(STATUS "Build tests: " ${CCTAG_BUILD_TESTS})
 message(STATUS "Build documentation: " ${CCTAG_BUILD_DOC})
 message(STATUS "Cuda support: " ${CCTAG_WITH_CUDA})
+message(STATUS "SYCL support: " ${CCTAG_WITH_SYCL})
 if(CCTAG_WITH_CUDA)
   message(STATUS "Compiling for CUDA CCs: ${CCTAG_CUDA_GENCODE_FLAGS}")
 endif()
