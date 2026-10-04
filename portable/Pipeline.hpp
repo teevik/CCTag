@@ -21,7 +21,7 @@ struct Pipeline;
 Pipeline& pipeline(int pipeId);
 
 /// Uploads a tightly packed gray image and builds the pyramid, each level half the size of the
-/// one above
+/// one above, then computes the gradient of every level
 void load(
     Pipeline& pipeline,
     const std::uint8_t* image,
@@ -32,6 +32,9 @@ void load(
 
 /// Copies the source image of a level into a packed host image
 void downloadSource(Pipeline& pipeline, std::uint32_t level, std::uint8_t* dst);
+
+/// Copies the gradient of a level into packed host images
+void downloadGradient(Pipeline& pipeline, std::uint32_t level, std::int16_t* dx, std::int16_t* dy);
 
 } // namespace portable
 } // namespace cctag

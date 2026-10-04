@@ -133,11 +133,14 @@ void detect(
         );
         Level& level = levels.back();
         downloadSource(pipe, i, level.src.data);
+        downloadGradient(pipe, i, level.dx.ptr<std::int16_t>(), level.dy.ptr<std::int16_t>());
+        // cvRecodedCanny cannot take a precomputed gradient, its own is discarded
+        cv::Mat cannyDx, cannyDy;
         cvRecodedCanny(
             level.src,
             level.edges,
-            level.dx,
-            level.dy,
+            cannyDx,
+            cannyDy,
             params._cannyThrLow * 256,
             params._cannyThrHigh * 256,
             3 | CV_CANNY_L2_GRADIENT,
