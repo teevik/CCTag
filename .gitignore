@@ -22,3 +22,6 @@ matlab/syntheticExperiments/figure
 
 # frequently changing config file
 mpg-2014-20.cmake
+
+# Clangd cache
+.cache
