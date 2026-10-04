@@ -141,7 +141,7 @@ static bool intersectLineToTwoEllipses(
   return true;
 }
 
-static void selectEdgePointInEllipticHull(
+void selectEdgePointInEllipticHull(
         const EdgePointCollection & edgeCollection,
         const numerical::geometry::Ellipse & outerEllipse,
         float scale,

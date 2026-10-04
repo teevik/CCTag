@@ -28,9 +28,6 @@
 #ifdef CCTAG_WITH_CUDA
 #include "cctag/cuda/tag.h"
 #endif
-#ifdef CCTAG_WITH_SYCL
-#include "portable/Pipeline.hpp"
-#endif
 
 #include <boost/math/constants/constants.hpp>
 #include <boost/math/special_functions/round.hpp>
@@ -829,10 +826,6 @@ void cctagDetection(
                                params._numberOfProcessedMultiresLayers,
                                cuda_allocates );
 
-#ifdef CCTAG_WITH_SYCL
-    static portable::Pipeline& portablePipeline = *new portable::Pipeline;
-#endif
-
     cctag::TagPipe* pipe1 = nullptr;
 #ifdef CCTAG_WITH_CUDA
     if( params._useCuda ) {
@@ -864,27 +857,10 @@ void cctagDetection(
     } else { // not params.useCuda
 #endif // CCTAG_WITH_CUDA
 
-#ifdef CCTAG_WITH_SYCL
-        assert( imgGraySrc.isContinuous() );
-        assert( imgGraySrc.type() == CV_8U );
-
-        portablePipeline.load( imgGraySrc.data,
-                               imgGraySrc.cols,
-                               imgGraySrc.rows,
-                               imagePyramid.getNbLevels() );
-
-        for( std::size_t i = 0; i < imagePyramid.getNbLevels(); ++i ) {
-            imagePyramid.getLevel(i)->setLevel( portablePipeline,
-                                                params._cannyThrLow,
-                                                params._cannyThrHigh,
-                                                &params );
-        }
-#else // not CCTAG_WITH_SYCL
         imagePyramid.build( imgGraySrc,
                             params._cannyThrLow,
                             params._cannyThrHigh,
                             &params );
-#endif // CCTAG_WITH_SYCL
 
         if( probe ) probePyramid( *probe, imagePyramid );
 

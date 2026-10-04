@@ -48,6 +48,12 @@ void cctagMultiresDetection(
 
 void update(CCTag::List& markers, const CCTag& markerToAdd);
 
+void selectEdgePointInEllipticHull(
+        const EdgePointCollection & edgeCollection,
+        const numerical::geometry::Ellipse & outerEllipse,
+        float scale,
+        std::list<EdgePoint*> & pointsInHull);
+
 } // namespace cctag
 
 

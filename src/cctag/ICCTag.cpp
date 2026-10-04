@@ -9,6 +9,9 @@
 #include <cctag/CCTag.hpp>
 #include <cctag/Detection.hpp>
 #include <cctag/utils/LogTime.hpp>
+#ifdef CCTAG_WITH_SYCL
+#include "portable/Detection.hpp"
+#endif
 
 #include <boost/filesystem.hpp>
 #include <boost/archive/xml_iarchive.hpp>
@@ -78,6 +81,9 @@ void cctagDetection(
       const CCTagMarkersBank * pBank,
       Probe* probe)
 {
+#ifdef CCTAG_WITH_SYCL
+  return portable::detect(markers, frame, graySrc, params, pBank, probe);
+#endif
   boost::ptr_list<cctag::CCTag> cctags;
   
   if ( pBank == nullptr)
