@@ -830,7 +830,7 @@ void cctagDetection(
                                cuda_allocates );
 
 #ifdef CCTAG_WITH_SYCL
-    static portable::Pipeline portablePipeline;
+    static portable::Pipeline& portablePipeline = *new portable::Pipeline;
 #endif
 
     cctag::TagPipe* pipe1 = nullptr;
@@ -864,10 +864,27 @@ void cctagDetection(
     } else { // not params.useCuda
 #endif // CCTAG_WITH_CUDA
 
+#ifdef CCTAG_WITH_SYCL
+        assert( imgGraySrc.isContinuous() );
+        assert( imgGraySrc.type() == CV_8U );
+
+        portablePipeline.load( imgGraySrc.data,
+                               imgGraySrc.cols,
+                               imgGraySrc.rows,
+                               imagePyramid.getNbLevels() );
+
+        for( std::size_t i = 0; i < imagePyramid.getNbLevels(); ++i ) {
+            imagePyramid.getLevel(i)->setLevel( portablePipeline,
+                                                params._cannyThrLow,
+                                                params._cannyThrHigh,
+                                                &params );
+        }
+#else // not CCTAG_WITH_SYCL
         imagePyramid.build( imgGraySrc,
                             params._cannyThrLow,
                             params._cannyThrHigh,
                             &params );
+#endif // CCTAG_WITH_SYCL
 
         if( probe ) probePyramid( *probe, imagePyramid );
 

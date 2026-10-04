@@ -12,6 +12,9 @@
 #ifdef CCTAG_WITH_CUDA
 #include "cctag/cuda/tag.h"
 #endif
+#ifdef CCTAG_WITH_SYCL
+#include "portable/Pipeline.hpp"
+#endif
 #include <opencv2/imgproc/types_c.h>
 
 namespace cctag {
@@ -65,6 +68,25 @@ void Level::setLevel( const cv::Mat & src,
     }
 
     cv::resize( src, *_src, cv::Size(_src->cols,_src->rows) );
+    detectEdges( thrLowCanny, thrHighCanny, params );
+}
+
+#ifdef CCTAG_WITH_SYCL
+void Level::setLevel( portable::Pipeline & pipeline,
+                      float thrLowCanny,
+                      float thrHighCanny,
+                      const cctag::Parameters* params )
+{
+    // The source image comes from the SYCL device, the CPU continues from Canny.
+    pipeline.downloadSource( _level, _src->data );
+    detectEdges( thrLowCanny, thrHighCanny, params );
+}
+#endif // CCTAG_WITH_SYCL
+
+void Level::detectEdges( float thrLowCanny,
+                         float thrHighCanny,
+                         const cctag::Parameters* params )
+{
     // ASSERT TODO : check that the data are allocated here
     // Compute derivative and canny edge extraction.
     cvRecodedCanny( *_src, *_edges, *_dx, *_dy,

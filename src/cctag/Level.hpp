@@ -12,6 +12,9 @@
 
 namespace cctag {
     class TagPipe;
+    namespace portable {
+        class Pipeline;
+    }
 }
 
 namespace cctag {
@@ -34,6 +37,12 @@ public:
   void setLevel( cctag::TagPipe* cuda_pipe,
                  const cctag::Parameters& params );
 #endif // CCTAG_WITH_CUDA
+#ifdef CCTAG_WITH_SYCL
+  void setLevel( portable::Pipeline & pipeline,
+                 float thrLowCanny,
+                 float thrHighCanny,
+                 const cctag::Parameters* params );
+#endif // CCTAG_WITH_SYCL
 
   const cv::Mat & getSrc() const;
   const cv::Mat & getDx() const;
@@ -57,6 +66,10 @@ public:
   
 
 private:
+  void detectEdges( float thrLowCanny,
+                    float thrHighCanny,
+                    const cctag::Parameters* params );
+
   int         _level;
   bool        _cuda_allocates;
   bool        _mat_initialized_from_cuda;

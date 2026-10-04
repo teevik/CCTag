@@ -1,0 +1,72 @@
+Language: Cpp
+Standard: c++20
+
+ColumnLimit: 100
+IndentWidth: 4
+ContinuationIndentWidth: 4
+UseTab: Never
+
+# Braces on the same line, always present
+BreakBeforeBraces: Attach
+InsertBraces: true
+SpaceBeforeParens: ControlStatements
+
+# Indent wrapped arguments and parameters, one per line
+AlignAfterOpenBracket: BlockIndent
+BinPackArguments: false
+BinPackParameters: OnePerLine
+AllowAllArgumentsOnNextLine: false
+AllowAllParametersOfDeclarationOnNextLine: false
+AlignOperands: DontAlign
+BreakBeforeBinaryOperators: NonAssignment
+BreakBeforeTernaryOperators: true
+
+# Keep empty bodies and lambdas on one line when they fit
+AllowShortFunctionsOnASingleLine: Empty
+AllowShortBlocksOnASingleLine: Empty
+AllowShortIfStatementsOnASingleLine: Never
+AllowShortLoopsOnASingleLine: false
+AllowShortCaseLabelsOnASingleLine: false
+AllowShortLambdasOnASingleLine: All
+AllowShortEnumsOnASingleLine: false
+
+# Keep spacing independent of neighbouring lines
+AlignConsecutiveAssignments: None
+AlignConsecutiveDeclarations: None
+AlignTrailingComments:
+  Kind: Never
+AlignEscapedNewlines: DontAlign
+
+# Declarations
+PointerAlignment: Left
+QualifierAlignment: Left
+BreakTemplateDeclarations: Yes
+RequiresClausePosition: OwnLine
+BreakConstructorInitializers: AfterColon
+PackConstructorInitializers: Never
+LambdaBodyIndentation: OuterScope
+IndentCaseLabels: true
+Cpp11BracedListStyle: true
+NamespaceIndentation: None
+FixNamespaceComments: true
+
+# Keep at most one blank line and end the file with a newline
+MaxEmptyLinesToKeep: 1
+KeepEmptyLinesAtTheStartOfBlocks: false
+InsertNewlineAtEOF: true
+ReflowComments: true
+
+# Sort includes within groups
+SortIncludes: CaseSensitive
+IncludeBlocks: Regroup
+IncludeCategories:
+  - Regex: '^"'
+    Priority: 1
+  - Regex: "^<cctag/"
+    Priority: 2
+  - Regex: "^<(Eigen|opencv|boost)/"
+    Priority: 3
+  - Regex: '^<.*\.'
+    Priority: 4
+  - Regex: "^<"
+    Priority: 5
