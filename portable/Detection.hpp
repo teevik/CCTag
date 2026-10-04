@@ -19,6 +19,7 @@ namespace portable {
 /// not yet ported run on the CPU. Takes the arguments of cctag::cctagDetection that it uses.
 void detect(
     boost::ptr_list<ICCTag>& markers,
+    int pipeId,
     std::size_t frame,
     const cv::Mat& graySrc,
     const Parameters& providedParams,

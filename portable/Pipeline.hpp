@@ -9,34 +9,29 @@
 #define CCTAG_PORTABLE_PIPELINE_HPP
 
 #include <cstdint>
-#include <memory>
 
 namespace cctag {
 namespace portable {
 
-/// The stages of a detection that run on a SYCL device
-class Pipeline {
-  public:
-    Pipeline();
-    ~Pipeline();
+/// The SYCL queue and device images of one pipe id, defined in Pipeline.cpp.
+struct Pipeline;
 
-    /// Uploads a tightly packed gray image and builds the pyramid, each level half the size of the
-    /// one above
-    void load(
-        const std::uint8_t* image,
-        std::uint32_t width,
-        std::uint32_t height,
-        std::uint32_t levels
-    );
+/// The pipeline of a pipe id, created on first use. Detections on different pipelines can run at
+/// the same time.
+Pipeline& pipeline(int pipeId);
 
-    /// Copies the source image of a level into a tightly packed host image
-    void downloadSource(std::uint32_t level, std::uint8_t* dst);
+/// Uploads a tightly packed gray image and builds the pyramid, each level half the size of the
+/// one above
+void load(
+    Pipeline& pipeline,
+    const std::uint8_t* image,
+    std::uint32_t width,
+    std::uint32_t height,
+    std::uint32_t levels
+);
 
-  private:
-    // Keeps SYCL out of the headers that host code includes
-    struct Impl;
-    std::unique_ptr<Impl> _impl;
-};
+/// Copies the source image of a level into a packed host image
+void downloadSource(Pipeline& pipeline, std::uint32_t level, std::uint8_t* dst);
 
 } // namespace portable
 } // namespace cctag

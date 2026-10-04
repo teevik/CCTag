@@ -82,7 +82,7 @@ void cctagDetection(
       Probe* probe)
 {
 #ifdef CCTAG_WITH_SYCL
-  return portable::detect(markers, frame, graySrc, params, pBank, probe);
+  return portable::detect(markers, pipeId, frame, graySrc, params, pBank, probe);
 #endif
   boost::ptr_list<cctag::CCTag> cctags;
   

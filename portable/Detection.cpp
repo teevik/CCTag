@@ -95,14 +95,14 @@ void projectToLevel0(CCTag& marker, const EdgePointCollection& level0) {
 
 void detect(
     boost::ptr_list<ICCTag>& markers,
+    int pipeId,
     std::size_t frame,
     const cv::Mat& graySrc,
     const Parameters& providedParams,
     const CCTagMarkersBank* bank,
     Probe* probe
 ) {
-    // Never destroyed: AdaptiveCpp cannot free device memory from a static destructor
-    static Pipeline& pipeline = *new Pipeline;
+    Pipeline& pipe = pipeline(pipeId);
 
     std::unique_ptr<CCTagMarkersBank> defaultBank;
     if (!bank) {
@@ -118,7 +118,7 @@ void detect(
     assert(graySrc.type() == CV_8U);
 
     const int levelCount = params._numberOfProcessedMultiresLayers;
-    pipeline.load(graySrc.data, graySrc.cols, graySrc.rows, levelCount);
+    load(pipe, graySrc.data, graySrc.cols, graySrc.rows, levelCount);
 
     // Canny and thinning stay on the CPU, as in Level::setLevel
     std::vector<Level> levels;
@@ -132,7 +132,7 @@ void detect(
              cv::Mat(height, width, CV_8UC1)}
         );
         Level& level = levels.back();
-        pipeline.downloadSource(i, level.src.data);
+        downloadSource(pipe, i, level.src.data);
         cvRecodedCanny(
             level.src,
             level.edges,

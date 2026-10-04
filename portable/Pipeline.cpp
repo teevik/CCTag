@@ -11,6 +11,8 @@
 
 #include <cstddef>
 #include <iostream>
+#include <map>
+#include <mutex>
 #include <vector>
 
 namespace cctag {
@@ -27,41 +29,42 @@ struct Level {
 
 } // namespace
 
-struct Pipeline::Impl {
+struct Pipeline {
     sycl::queue queue{sycl::property::queue::in_order{}};
     std::vector<Level> levels;
-
-    void allocate(std::uint32_t width, std::uint32_t height, std::uint32_t count);
-    void release();
-    void downsample(const Level& src, const Level& dst);
 };
 
-void Pipeline::Impl::allocate(std::uint32_t width, std::uint32_t height, std::uint32_t count) {
+namespace {
+
+void release(Pipeline& pipeline) {
+    pipeline.queue.wait();
+    for (const Level& level : pipeline.levels) {
+        sycl::free(level.source, pipeline.queue);
+    }
+    pipeline.levels.clear();
+}
+
+void allocate(Pipeline& pipeline, std::uint32_t width, std::uint32_t height, std::uint32_t count) {
+    const std::vector<Level>& levels = pipeline.levels;
     if (levels.size() == count && count > 0 && levels[0].width == width
         && levels[0].height == height) {
         return;
     }
 
-    release();
+    release(pipeline);
     for (std::uint32_t i = 0; i < count; ++i) {
-        levels.push_back(
-            {width, height, sycl::malloc_device<std::uint8_t>(std::size_t(width) * height, queue)}
+        pipeline.levels.push_back(
+            {width,
+             height,
+             sycl::malloc_device<std::uint8_t>(std::size_t(width) * height, pipeline.queue)}
         );
         width /= 2;
         height /= 2;
     }
 }
 
-void Pipeline::Impl::release() {
-    queue.wait();
-    for (const Level& level : levels) {
-        sycl::free(level.source, queue);
-    }
-    levels.clear();
-}
-
 /// Halves an image by averaging every 2x2 block, as cv::resize does when it halves
-void Pipeline::Impl::downsample(const Level& src, const Level& dst) {
+void downsample(sycl::queue& queue, const Level& src, const Level& dst) {
     const std::uint8_t* in = src.source;
     std::uint8_t* out = dst.source;
     const std::size_t inWidth = src.width;
@@ -77,34 +80,42 @@ void Pipeline::Impl::downsample(const Level& src, const Level& dst) {
     });
 }
 
-Pipeline::Pipeline() :
-    _impl(new Impl) {
-    std::cerr << "SYCL device: " << _impl->queue.get_device().get_info<sycl::info::device::name>()
-              << std::endl;
+} // namespace
+
+Pipeline& pipeline(int pipeId) {
+    // Never destroyed: AdaptiveCpp cannot free device memory from a static destructor
+    static std::map<int, Pipeline>& pipelines = *new std::map<int, Pipeline>;
+    static std::mutex mutex;
+
+    const std::lock_guard<std::mutex> lock(mutex);
+    const auto inserted = pipelines.try_emplace(pipeId);
+    Pipeline& pipeline = inserted.first->second;
+    if (inserted.second) {
+        std::cerr << "SYCL device: "
+                  << pipeline.queue.get_device().get_info<sycl::info::device::name>() << std::endl;
+    }
+    return pipeline;
 }
 
-Pipeline::~Pipeline() {
-    _impl->release();
-}
-
-void Pipeline::load(
+void load(
+    Pipeline& pipeline,
     const std::uint8_t* image,
     std::uint32_t width,
     std::uint32_t height,
     std::uint32_t levels
 ) {
-    _impl->allocate(width, height, levels);
+    allocate(pipeline, width, height, levels);
 
-    const std::vector<Level>& pyramid = _impl->levels;
-    _impl->queue.memcpy(pyramid[0].source, image, std::size_t(width) * height);
+    const std::vector<Level>& pyramid = pipeline.levels;
+    pipeline.queue.memcpy(pyramid[0].source, image, std::size_t(width) * height);
     for (std::size_t i = 1; i < pyramid.size(); ++i) {
-        _impl->downsample(pyramid[i - 1], pyramid[i]);
+        downsample(pipeline.queue, pyramid[i - 1], pyramid[i]);
     }
 }
 
-void Pipeline::downloadSource(std::uint32_t level, std::uint8_t* dst) {
-    const Level& src = _impl->levels[level];
-    _impl->queue.memcpy(dst, src.source, std::size_t(src.width) * src.height).wait();
+void downloadSource(Pipeline& pipeline, std::uint32_t level, std::uint8_t* dst) {
+    const Level& src = pipeline.levels[level];
+    pipeline.queue.memcpy(dst, src.source, std::size_t(src.width) * src.height).wait();
 }
 
 } // namespace portable
