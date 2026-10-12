@@ -43,10 +43,14 @@ constexpr Taps derivative{
 };
 
 /// Filters every column of the source image, replicating the border rows
-void filterColumns(sycl::queue& queue, const Level& level, const Taps taps, float* out) {
-    const std::uint8_t* in = level.source;
-    const int width = level.width;
-    const int height = level.height;
+void filterColumns(
+    sycl::queue& queue,
+    const Plane<const std::uint8_t> in,
+    const Taps taps,
+    const Plane<float> out
+) {
+    const int width = in.width;
+    const int height = in.height;
 
     queue.parallel_for(sycl::range<2>(height, width), [=](sycl::id<2> id) {
         const int y = id[0];
@@ -54,9 +58,9 @@ void filterColumns(sycl::queue& queue, const Level& level, const Taps taps, floa
         float sum = 0.0f;
         for (int k = 0; k < 9; ++k) {
             const int row = sycl::clamp(y + k - 4, 0, height - 1);
-            sum += taps[k] * in[row * width + x];
+            sum += taps[k] * in.at(row, x);
         }
-        out[y * width + x] = sum;
+        out.at(y, x) = sum;
     });
 }
 
@@ -64,13 +68,12 @@ void filterColumns(sycl::queue& queue, const Level& level, const Taps taps, floa
 /// nearest as cv::saturate_cast does
 void filterRows(
     sycl::queue& queue,
-    const Level& level,
-    const float* in,
+    const Plane<const float> in,
     const Taps taps,
-    std::int16_t* out
+    const Plane<std::int16_t> out
 ) {
-    const int width = level.width;
-    const int height = level.height;
+    const int width = in.width;
+    const int height = in.height;
 
     queue.parallel_for(sycl::range<2>(height, width), [=](sycl::id<2> id) {
         const int y = id[0];
@@ -78,19 +81,20 @@ void filterRows(
         float sum = 0.0f;
         for (int k = 0; k < 9; ++k) {
             const int column = sycl::clamp(x + k - 4, 0, width - 1);
-            sum += taps[k] * in[y * width + column];
+            sum += taps[k] * in.at(y, column);
         }
-        out[y * width + x] = static_cast<std::int16_t>(sycl::rint(sum));
+        out.at(y, x) = static_cast<std::int16_t>(sycl::rint(sum));
     });
 }
 
 } // namespace
 
 void gradient(sycl::queue& queue, const Level& level, float* scratch) {
-    filterColumns(queue, level, gauss, scratch);
-    filterRows(queue, level, scratch, derivative, level.dx);
-    filterColumns(queue, level, derivative, scratch);
-    filterRows(queue, level, scratch, gauss, level.dy);
+    const Plane<float> intermediate{scratch, level.width, level.height};
+    filterColumns(queue, level.sourcePlane(), gauss, intermediate);
+    filterRows(queue, intermediate, derivative, level.dxPlane());
+    filterColumns(queue, level.sourcePlane(), derivative, intermediate);
+    filterRows(queue, intermediate, gauss, level.dyPlane());
 }
 
 } // namespace portable

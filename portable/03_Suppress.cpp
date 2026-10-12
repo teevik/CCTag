@@ -16,8 +16,8 @@ namespace {
 constexpr float tan22 = 0.41421356f;
 constexpr float tan67 = 2.41421356f;
 
-/// The gradient magnitude at index i, rounded
-int magnitude(const std::int16_t* dx, const std::int16_t* dy, int i) {
+/// The gradient magnitude at index i in scan order, rounded
+int magnitude(const Plane<const std::int16_t> dx, const Plane<const std::int16_t> dy, int i) {
     const int gx = dx[i];
     const int gy = dy[i];
     return sycl::rint(sycl::sqrt(float(gx * gx + gy * gy)));
@@ -26,15 +26,17 @@ int magnitude(const std::int16_t* dx, const std::int16_t* dy, int i) {
 } // namespace
 
 void suppress(sycl::queue& queue, const Level& level, float low, float high) {
-    const std::int16_t* dx = level.dx;
-    const std::int16_t* dy = level.dy;
-    Mark* map = level.map;
-    const int width = level.width;
-    const int height = level.height;
+    const Plane<const std::int16_t> dx = level.dxPlane();
+    const Plane<const std::int16_t> dy = level.dyPlane();
+    const Plane<Mark> map = level.mapPlane();
+    const int width = map.width;
+    const int height = map.height;
 
     queue.parallel_for(sycl::range<2>(height, width), [=](sycl::id<2> id) {
         const int y = id[0];
         const int x = id[1];
+        // Indexed in scan order rather than with at, as the neighbours along the gradient are one
+        // flat step away from i
         const int i = y * width + x;
         const bool border = x == 0 || y == 0 || x == width - 1 || y == height - 1;
         const int m = magnitude(dx, dy, i);

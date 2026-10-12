@@ -7,24 +7,25 @@
  */
 #include "portable/Stages.hpp"
 
-#include <cstddef>
-
 namespace cctag {
 namespace portable {
 
-void downsample(sycl::queue& queue, const Level& src, const Level& dst) {
-    const std::uint8_t* in = src.source;
-    std::uint8_t* out = dst.source;
-    const std::size_t inWidth = src.width;
-    const std::size_t outWidth = dst.width;
+void downsample(sycl::queue& queue, const Level& source_level, const Level& destination_level) {
+    const Plane<const std::uint8_t> src = source_level.sourcePlane();
+    const Plane<std::uint8_t> dest = destination_level.sourcePlane();
 
-    queue.parallel_for(sycl::range<2>(dst.height, dst.width), [=](sycl::id<2> id) {
-        const std::size_t y = id[0];
-        const std::size_t x = id[1];
-        const std::uint8_t* top = in + 2 * y * inWidth + 2 * x;
-        const std::uint8_t* bottom = top + inWidth;
-        const std::uint32_t sum = top[0] + top[1] + bottom[0] + bottom[1];
-        out[y * outWidth + x] = static_cast<std::uint8_t>((sum + 2) / 4);
+    queue.parallel_for(sycl::range<2>(dest.height, dest.width), [=](sycl::id<2> id) {
+        const int y = id[0];
+        const int x = id[1];
+
+        // Sum 2x2 block
+        const int corner_y = 2 * y;
+        const int corner_x = 2 * x;
+        const std::uint32_t sum = src.at(corner_y, corner_x) + src.at(corner_y, corner_x + 1)
+            + src.at(corner_y + 1, corner_x) + src.at(corner_y + 1, corner_x + 1);
+
+        // Round to nearest and store
+        dest.at(y, x) = static_cast<std::uint8_t>((sum + 2) / 4);
     });
 }
 

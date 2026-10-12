@@ -10,6 +10,7 @@
 
 #include <sycl/sycl.hpp>
 
+#include <cstddef>
 #include <cstdint>
 
 namespace cctag {
@@ -23,6 +24,26 @@ enum class Mark : std::uint8_t {
     edge = 255
 };
 
+/// A device-side view of one tightly packed image plane, cheap to capture into a kernel
+template <typename T>
+struct Plane {
+    T* data;
+    std::uint32_t width;
+    std::uint32_t height;
+
+    /// The same plane, read only
+    operator Plane<const T>() const { return {data, width, height}; }
+
+    /// The pixel in row y, column x
+    T& at(int y, int x) const { return data[std::size_t(y) * width + x]; }
+
+    /// The pixel at index i in scan order
+    T& operator[](std::size_t i) const { return data[i]; }
+
+    /// The number of pixels
+    std::size_t size() const { return std::size_t(width) * height; }
+};
+
 /// The device images of one pyramid level, tightly packed
 struct Level {
     std::uint32_t width;
@@ -31,6 +52,11 @@ struct Level {
     std::int16_t* dx;
     std::int16_t* dy;
     Mark* map;
+
+    Plane<std::uint8_t> sourcePlane() const { return {source, width, height}; }
+    Plane<std::int16_t> dxPlane() const { return {dx, width, height}; }
+    Plane<std::int16_t> dyPlane() const { return {dy, width, height}; }
+    Plane<Mark> mapPlane() const { return {map, width, height}; }
 };
 
 /// 01: halves an image by averaging every 2x2 block

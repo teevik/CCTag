@@ -7,8 +7,6 @@
  */
 #include "portable/Stages.hpp"
 
-#include <cstddef>
-
 namespace cctag {
 namespace portable {
 
@@ -24,7 +22,8 @@ struct Neighbours {
     int count;
 };
 
-Neighbours neighbours(const Mark* map, int width, int i, Mark mark) {
+Neighbours neighbours(const Plane<const Mark> map, int i, Mark mark) {
+    const int width = map.width;
     Neighbours found{-1, 0};
     for (int v = -1; v <= 1; ++v) {
         for (int u = -1; u <= 1; ++u) {
@@ -44,20 +43,18 @@ Neighbours neighbours(const Mark* map, int width, int i, Mark mark) {
 /// promoting the first weak neighbour and stacking the pixel if it has more. Sets pending if a full
 /// stack makes a walker leave a weak neighbour behind.
 void walk(sycl::queue& queue, const Level& level, std::uint32_t* pending) {
-    Mark* map = level.map;
-    const int width = level.width;
-    const std::size_t size = std::size_t(level.width) * level.height;
+    const Plane<Mark> map = level.mapPlane();
 
-    queue.parallel_for(sycl::range<1>(size), [=](sycl::id<1> id) {
+    queue.parallel_for(sycl::range<1>(map.size()), [=](sycl::id<1> id) {
         int i = id[0];
-        if (map[i] != Mark::weak || neighbours(map, width, i, Mark::strong).count == 0) {
+        if (map[i] != Mark::weak || neighbours(map, i, Mark::strong).count == 0) {
             return;
         }
         map[i] = Mark::strong;
         int stack[walkStack];
         int top = 0;
         for (;;) {
-            const Neighbours weak = neighbours(map, width, i, Mark::weak);
+            const Neighbours weak = neighbours(map, i, Mark::weak);
             if (weak.first < 0) {
                 if (top == 0) {
                     return;
