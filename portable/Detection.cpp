@@ -18,10 +18,6 @@
 #include <cctag/Probe.hpp>
 #include <cctag/Types.hpp>
 #include <cctag/Vote.hpp>
-#include <cctag/filter/cvRecode.hpp>
-#include <cctag/filter/thinning.hpp>
-
-#include <opencv2/imgproc/types_c.h>
 
 #include <algorithm>
 #include <cassert>
@@ -118,9 +114,16 @@ void detect(
     assert(graySrc.type() == CV_8U);
 
     const int levelCount = params._numberOfProcessedMultiresLayers;
-    load(pipe, graySrc.data, graySrc.cols, graySrc.rows, levelCount);
+    load(
+        pipe,
+        graySrc.data,
+        graySrc.cols,
+        graySrc.rows,
+        levelCount,
+        params._cannyThrLow,
+        params._cannyThrHigh
+    );
 
-    // Canny and thinning stay on the CPU, as in Level::setLevel
     std::vector<Level> levels;
     int width = graySrc.cols;
     int height = graySrc.rows;
@@ -134,21 +137,7 @@ void detect(
         Level& level = levels.back();
         downloadSource(pipe, i, level.src.data);
         downloadGradient(pipe, i, level.dx.ptr<std::int16_t>(), level.dy.ptr<std::int16_t>());
-        // cvRecodedCanny cannot take a precomputed gradient, its own is discarded
-        cv::Mat cannyDx, cannyDy;
-        cvRecodedCanny(
-            level.src,
-            level.edges,
-            cannyDx,
-            cannyDy,
-            params._cannyThrLow * 256,
-            params._cannyThrHigh * 256,
-            3 | CV_CANNY_L2_GRADIENT,
-            i,
-            &params
-        );
-        cv::Mat temp(height, width, CV_8UC1);
-        thin(level.edges, temp);
+        downloadEdges(pipe, i, level.edges.data);
         width /= 2;
         height /= 2;
     }

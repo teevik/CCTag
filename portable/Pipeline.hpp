@@ -21,13 +21,16 @@ struct Pipeline;
 Pipeline& pipeline(int pipeId);
 
 /// Uploads a tightly packed gray image and builds the pyramid, each level half the size of the
-/// one above, then computes the gradient of every level
+/// one above, then computes the gradient and the thinned edge image of every level, with the Canny
+/// thresholds of Parameters
 void load(
     Pipeline& pipeline,
     const std::uint8_t* image,
     std::uint32_t width,
     std::uint32_t height,
-    std::uint32_t levels
+    std::uint32_t levels,
+    float cannyThrLow,
+    float cannyThrHigh
 );
 
 /// Copies the source image of a level into a packed host image
@@ -35,6 +38,9 @@ void downloadSource(Pipeline& pipeline, std::uint32_t level, std::uint8_t* dst);
 
 /// Copies the gradient of a level into packed host images
 void downloadGradient(Pipeline& pipeline, std::uint32_t level, std::int16_t* dx, std::int16_t* dy);
+
+/// Copies the thinned edge image of a level, 0 or 255, into a packed host image
+void downloadEdges(Pipeline& pipeline, std::uint32_t level, std::uint8_t* dst);
 
 } // namespace portable
 } // namespace cctag
