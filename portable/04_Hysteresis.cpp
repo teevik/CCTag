@@ -13,7 +13,7 @@ namespace portable {
 namespace {
 
 /// Branch points a hysteresis walker remembers to come back to
-constexpr int walkStack = 64;
+constexpr int walk_stack = 64;
 
 /// The 8-neighbours of an interior pixel with a mark the pixel itself does not have: the index of
 /// the first in scan order, or -1, and how many there are
@@ -43,7 +43,7 @@ Neighbours neighbours(const Plane<const Mark> map, int i, Mark mark) {
 /// promoting the first weak neighbour and stacking the pixel if it has more. Sets pending if a full
 /// stack makes a walker leave a weak neighbour behind.
 void walk(sycl::queue& queue, const Level& level, std::uint32_t* pending) {
-    const Plane<Mark> map = level.mapPlane();
+    const Plane<Mark> map = level.map_plane();
 
     queue.parallel_for(sycl::range<1>(map.size()), [=](sycl::id<1> id) {
         int i = id[0];
@@ -51,7 +51,7 @@ void walk(sycl::queue& queue, const Level& level, std::uint32_t* pending) {
             return;
         }
         map[i] = Mark::strong;
-        int stack[walkStack];
+        int stack[walk_stack];
         int top = 0;
         for (;;) {
             const Neighbours weak = neighbours(map, i, Mark::weak);
@@ -63,7 +63,7 @@ void walk(sycl::queue& queue, const Level& level, std::uint32_t* pending) {
                 continue;
             }
             if (weak.count > 1) {
-                if (top < walkStack) {
+                if (top < walk_stack) {
                     stack[top++] = i;
                 } else {
                     *pending = 1;

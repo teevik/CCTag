@@ -53,35 +53,35 @@ Plane plane(const cv::Mat& image) {
 }
 
 /// Refits a marker found on an upper level to the edge points of level 0
-void projectToLevel0(CCTag& marker, const EdgePointCollection& level0) {
+void project_to_level0(CCTag& marker, const EdgePointCollection& level0) {
     const float scale = marker.scale();
-    Ellipse rescaledOuterEllipse = marker.rescaledOuterEllipse();
+    Ellipse rescaled_outer_ellipse = marker.rescaledOuterEllipse();
 
-    std::list<EdgePoint*> pointsInHull;
-    selectEdgePointInEllipticHull(level0, rescaledOuterEllipse, scale, pointsInHull);
-    if (pointsInHull.size() < 5) {
+    std::list<EdgePoint*> points_in_hull;
+    selectEdgePointInEllipticHull(level0, rescaled_outer_ellipse, scale, points_in_hull);
+    if (points_in_hull.size() < 5) {
         return;
     }
 
     std::vector<EdgePoint*> points;
-    float SmFinal = 1e+10;
-    outlierRemoval(pointsInHull, points, SmFinal, 20.0, NO_WEIGHT, 60);
+    float sm_final = 1e+10;
+    outlierRemoval(points_in_hull, points, sm_final, 20.0, NO_WEIGHT, 60);
     if (points.size() < 5) {
         return;
     }
 
     try {
-        numerical::ellipseFitting(rescaledOuterEllipse, points);
+        numerical::ellipseFitting(rescaled_outer_ellipse, points);
 
-        std::vector<DirectedPoint2d<Eigen::Vector3f>> directedPoints;
+        std::vector<DirectedPoint2d<Eigen::Vector3f>> directed_points;
         for (EdgePoint* e : points) {
-            directedPoints.emplace_back(e->x(), e->y(), e->dX(), e->dY());
+            directed_points.emplace_back(e->x(), e->y(), e->dX(), e->dY());
         }
         marker.setCenterImg(
             Point2d<Eigen::Vector3f>(marker.centerImg().x() * scale, marker.centerImg().y() * scale)
         );
-        marker.setRescaledOuterEllipse(rescaledOuterEllipse);
-        marker.setRescaledOuterEllipsePoints(directedPoints);
+        marker.setRescaledOuterEllipse(rescaled_outer_ellipse);
+        marker.setRescaledOuterEllipsePoints(directed_points);
     } catch (...) {
         // The marker keeps its upper level fit
     }
@@ -91,43 +91,43 @@ void projectToLevel0(CCTag& marker, const EdgePointCollection& level0) {
 
 void detect(
     boost::ptr_list<ICCTag>& markers,
-    int pipeId,
+    int pipe_id,
     std::size_t frame,
-    const cv::Mat& graySrc,
-    const Parameters& providedParams,
+    const cv::Mat& gray_src,
+    const Parameters& provided_params,
     const CCTagMarkersBank* bank,
     Probe* probe
 ) {
-    Pipeline& pipe = pipeline(pipeId);
+    Pipeline& pipe = pipeline(pipe_id);
 
-    std::unique_ptr<CCTagMarkersBank> defaultBank;
+    std::unique_ptr<CCTagMarkersBank> default_bank;
     if (!bank) {
-        defaultBank.reset(new CCTagMarkersBank(providedParams._nCrowns));
-        bank = defaultBank.get();
+        default_bank.reset(new CCTagMarkersBank(provided_params._nCrowns));
+        bank = default_bank.get();
     }
 
-    const Parameters& params = Parameters::OverrideLoaded ? Parameters::Override : providedParams;
+    const Parameters& params = Parameters::OverrideLoaded ? Parameters::Override : provided_params;
 
     std::srand(1);
 
-    assert(graySrc.isContinuous());
-    assert(graySrc.type() == CV_8U);
+    assert(gray_src.isContinuous());
+    assert(gray_src.type() == CV_8U);
 
-    const int levelCount = params._numberOfProcessedMultiresLayers;
+    const int level_count = params._numberOfProcessedMultiresLayers;
     load(
         pipe,
-        graySrc.data,
-        graySrc.cols,
-        graySrc.rows,
-        levelCount,
+        gray_src.data,
+        gray_src.cols,
+        gray_src.rows,
+        level_count,
         params._cannyThrLow,
         params._cannyThrHigh
     );
 
     std::vector<Level> levels;
-    int width = graySrc.cols;
-    int height = graySrc.rows;
-    for (int i = 0; i < levelCount; ++i) {
+    int width = gray_src.cols;
+    int height = gray_src.rows;
+    for (int i = 0; i < level_count; ++i) {
         levels.push_back(
             {cv::Mat(height, width, CV_8UC1),
              cv::Mat(height, width, CV_16SC1),
@@ -135,15 +135,15 @@ void detect(
              cv::Mat(height, width, CV_8UC1)}
         );
         Level& level = levels.back();
-        downloadSource(pipe, i, level.src.data);
-        downloadGradient(pipe, i, level.dx.ptr<std::int16_t>(), level.dy.ptr<std::int16_t>());
-        downloadEdges(pipe, i, level.edges.data);
+        download_source(pipe, i, level.src.data);
+        download_gradient(pipe, i, level.dx.ptr<std::int16_t>(), level.dy.ptr<std::int16_t>());
+        download_edges(pipe, i, level.edges.data);
         width /= 2;
         height /= 2;
     }
 
     if (probe) {
-        for (int i = 0; i < levelCount; ++i) {
+        for (int i = 0; i < level_count; ++i) {
             probe->pyramid(i, plane(levels[i].src));
             probe->gradient(i, plane(levels[i].dx), plane(levels[i].dy));
             probe->edges(i, plane(levels[i].edges));
@@ -151,28 +151,28 @@ void detect(
     }
 
     // Every level gets a collection of the size of level 0, as in cctagMultiresDetection
-    std::vector<std::unique_ptr<EdgePointCollection>> edgeCollections(levelCount);
-    for (auto& edgeCollection : edgeCollections) {
-        edgeCollection.reset(new EdgePointCollection(graySrc.cols, graySrc.rows));
+    std::vector<std::unique_ptr<EdgePointCollection>> edge_collections(level_count);
+    for (auto& edge_collection : edge_collections) {
+        edge_collection.reset(new EdgePointCollection(gray_src.cols, gray_src.rows));
     }
 
     // Detect on every level, from the top of the pyramid down
     CCTag::List found;
-    for (int i = levelCount - 1; i >= 0; --i) {
+    for (int i = level_count - 1; i >= 0; --i) {
         const Level& level = levels[i];
-        EdgePointCollection& edgeCollection = *edgeCollections[i];
+        EdgePointCollection& edge_collection = *edge_collections[i];
 
         std::vector<EdgePoint*> seeds;
-        edgesPointsFromCanny(edgeCollection, level.edges, level.dx, level.dy);
-        vote(edgeCollection, seeds, level.dx, level.dy, params);
+        edgesPointsFromCanny(edge_collection, level.edges, level.dx, level.dy);
+        vote(edge_collection, seeds, level.dx, level.dy, params);
         if (seeds.size() > 1) {
             std::sort(seeds.begin(), seeds.end(), receivedMoreVoteThan);
         }
 
-        CCTag::List levelMarkers;
+        CCTag::List level_markers;
         cctagDetectionFromEdges(
-            levelMarkers,
-            edgeCollection,
+            level_markers,
+            edge_collection,
             level.src,
             seeds,
             frame,
@@ -181,14 +181,14 @@ void detect(
             params,
             nullptr
         );
-        for (const CCTag& marker : levelMarkers) {
+        for (const CCTag& marker : level_markers) {
             found.push_back(new CCTag(marker));
         }
     }
 
     for (CCTag& marker : found) {
         if (marker.pyramidLevel() > 0) {
-            projectToLevel0(marker, *edgeCollections[0]);
+            project_to_level0(marker, *edge_collections[0]);
         } else {
             marker.setRescaledOuterEllipsePoints(marker.points().back());
         }
@@ -196,51 +196,51 @@ void detect(
 
     if (params._doIdentification) {
         const cv::Mat& src = levels[0].src;
-        std::vector<std::vector<ImageCut>> vSelectedCuts(found.size());
+        std::vector<std::vector<ImageCut>> v_selected_cuts(found.size());
         std::vector<int> detected(found.size(), -1);
 
-        int tagIndex = 0;
+        int tag_index = 0;
         for (const CCTag& marker : found) {
-            detected[tagIndex] = identification::identify_step_1(
-                tagIndex,
+            detected[tag_index] = identification::identify_step_1(
+                tag_index,
                 marker,
-                vSelectedCuts[tagIndex],
+                v_selected_cuts[tag_index],
                 src,
                 params
             );
-            ++tagIndex;
+            ++tag_index;
         }
 
-        tagIndex = 0;
+        tag_index = 0;
         for (CCTag& marker : found) {
-            if (detected[tagIndex] == status::id_reliable) {
-                detected[tagIndex] = identification::identify_step_2(
-                    tagIndex,
+            if (detected[tag_index] == status::id_reliable) {
+                detected[tag_index] = identification::identify_step_2(
+                    tag_index,
                     marker,
-                    vSelectedCuts[tagIndex],
+                    v_selected_cuts[tag_index],
                     bank->getMarkers(),
                     src,
                     nullptr,
                     params
                 );
             }
-            marker.setStatus(detected[tagIndex]);
-            ++tagIndex;
+            marker.setStatus(detected[tag_index]);
+            ++tag_index;
         }
     }
 
     // Delete overlapping markers while keeping the best ones, in two passes as the legacy code does
-    CCTag::List markersPrelim, markersFinal;
+    CCTag::List markers_prelim, markers_final;
     for (const CCTag& marker : found) {
-        update(markersPrelim, marker);
+        update(markers_prelim, marker);
     }
-    for (const CCTag& marker : markersPrelim) {
-        update(markersFinal, marker);
+    for (const CCTag& marker : markers_prelim) {
+        update(markers_final, marker);
     }
-    markersFinal.sort();
+    markers_final.sort();
 
     markers.clear();
-    for (const CCTag& marker : markersFinal) {
+    for (const CCTag& marker : markers_final) {
         markers.push_back(new CCTag(marker));
     }
 }

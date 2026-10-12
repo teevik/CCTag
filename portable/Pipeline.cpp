@@ -68,13 +68,13 @@ void allocate(Pipeline& pipeline, std::uint32_t width, std::uint32_t height, std
 
 } // namespace
 
-Pipeline& pipeline(int pipeId) {
+Pipeline& pipeline(int pipe_id) {
     // Never destroyed: AdaptiveCpp cannot free device memory from a static destructor
     static std::map<int, Pipeline>& pipelines = *new std::map<int, Pipeline>;
     static std::mutex mutex;
 
     const std::lock_guard<std::mutex> lock(mutex);
-    const auto inserted = pipelines.try_emplace(pipeId);
+    const auto inserted = pipelines.try_emplace(pipe_id);
     Pipeline& pipeline = inserted.first->second;
     if (inserted.second) {
         std::cerr << "SYCL device: "
@@ -89,8 +89,8 @@ void load(
     std::uint32_t width,
     std::uint32_t height,
     std::uint32_t levels,
-    float cannyThrLow,
-    float cannyThrHigh
+    float canny_thr_low,
+    float canny_thr_high
 ) {
     allocate(pipeline, width, height, levels);
     sycl::queue& queue = pipeline.queue;
@@ -101,8 +101,8 @@ void load(
         downsample(queue, pyramid[i - 1], pyramid[i]);
     }
     // cvRecodedCanny scales the thresholds by 256 to compare with the magnitude
-    const float low = cannyThrLow * 256;
-    const float high = cannyThrHigh * 256;
+    const float low = canny_thr_low * 256;
+    const float high = canny_thr_high * 256;
     for (const Level& level : pyramid) {
         gradient(queue, level, pipeline.intermediate);
         suppress(queue, level, low, high);
@@ -111,19 +111,19 @@ void load(
     }
 }
 
-void downloadSource(Pipeline& pipeline, std::uint32_t level, std::uint8_t* dst) {
+void download_source(Pipeline& pipeline, std::uint32_t level, std::uint8_t* dst) {
     const Level& src = pipeline.levels[level];
     pipeline.queue.memcpy(dst, src.source, std::size_t(src.width) * src.height).wait();
 }
 
-void downloadGradient(Pipeline& pipeline, std::uint32_t level, std::int16_t* dx, std::int16_t* dy) {
+void download_gradient(Pipeline& pipeline, std::uint32_t level, std::int16_t* dx, std::int16_t* dy) {
     const Level& src = pipeline.levels[level];
     const std::size_t size = std::size_t(src.width) * src.height;
     pipeline.queue.memcpy(dx, src.dx, size * sizeof(std::int16_t));
     pipeline.queue.memcpy(dy, src.dy, size * sizeof(std::int16_t)).wait();
 }
 
-void downloadEdges(Pipeline& pipeline, std::uint32_t level, std::uint8_t* dst) {
+void download_edges(Pipeline& pipeline, std::uint32_t level, std::uint8_t* dst) {
     const Level& src = pipeline.levels[level];
     pipeline.queue.memcpy(dst, src.map, std::size_t(src.width) * src.height).wait();
 }

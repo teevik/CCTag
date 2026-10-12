@@ -43,7 +43,7 @@ constexpr Taps derivative{
 };
 
 /// Filters every column of the source image, replicating the border rows
-void filterColumns(
+void filter_columns(
     sycl::queue& queue,
     const Plane<const std::uint8_t> in,
     const Taps taps,
@@ -66,7 +66,7 @@ void filterColumns(
 
 /// Filters every row of an intermediate image, replicating the border columns and rounding to
 /// nearest as cv::saturate_cast does
-void filterRows(
+void filter_rows(
     sycl::queue& queue,
     const Plane<const float> in,
     const Taps taps,
@@ -91,10 +91,10 @@ void filterRows(
 
 void gradient(sycl::queue& queue, const Level& level, float* scratch) {
     const Plane<float> intermediate{scratch, level.width, level.height};
-    filterColumns(queue, level.sourcePlane(), gauss, intermediate);
-    filterRows(queue, intermediate, derivative, level.dxPlane());
-    filterColumns(queue, level.sourcePlane(), derivative, intermediate);
-    filterRows(queue, intermediate, gauss, level.dyPlane());
+    filter_columns(queue, level.source_plane(), gauss, intermediate);
+    filter_rows(queue, intermediate, derivative, level.dx_plane());
+    filter_columns(queue, level.source_plane(), derivative, intermediate);
+    filter_rows(queue, intermediate, gauss, level.dy_plane());
 }
 
 } // namespace portable

@@ -26,9 +26,9 @@ int magnitude(const Plane<const std::int16_t> dx, const Plane<const std::int16_t
 } // namespace
 
 void suppress(sycl::queue& queue, const Level& level, float low, float high) {
-    const Plane<const std::int16_t> dx = level.dxPlane();
-    const Plane<const std::int16_t> dy = level.dyPlane();
-    const Plane<Mark> map = level.mapPlane();
+    const Plane<const std::int16_t> dx = level.dx_plane();
+    const Plane<const std::int16_t> dy = level.dy_plane();
+    const Plane<Mark> map = level.map_plane();
     const int width = map.width;
     const int height = map.height;
 
@@ -58,8 +58,8 @@ void suppress(sycl::queue& queue, const Level& level, float low, float high) {
         } else if (ay > tan67 * ax) {
             step = width;
         } else {
-            const bool sameSign = (gx < 0) == (gy < 0);
-            step = sameSign ? width + 1 : width - 1;
+            const bool same_sign = (gx < 0) == (gy < 0);
+            step = same_sign ? width + 1 : width - 1;
             diagonal = true;
         }
 

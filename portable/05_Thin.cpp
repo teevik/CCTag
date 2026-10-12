@@ -59,7 +59,7 @@ constexpr Lut tabulate(Subiteration subiteration) {
 /// One subiteration over a whole level, as imageIter of filter/thinning.cpp, where in marks edges
 /// with edge: each interior pixel of out is marked edge where lut keeps one, else none, and the
 /// border is none
-void thinPass(
+void thin_pass(
     sycl::queue& queue,
     const Plane<const Mark> in,
     Mark edge,
@@ -91,10 +91,10 @@ void thinPass(
 void thin(sycl::queue& queue, const Level& level, Mark* scratch) {
     constexpr Lut first = tabulate(Subiteration::first);
     constexpr Lut second = tabulate(Subiteration::second);
-    const Plane<Mark> map = level.mapPlane();
+    const Plane<Mark> map = level.map_plane();
     const Plane<Mark> thinned{scratch, level.width, level.height};
-    thinPass(queue, map, Mark::strong, first, thinned);
-    thinPass(queue, thinned, Mark::edge, second, map);
+    thin_pass(queue, map, Mark::strong, first, thinned);
+    thin_pass(queue, thinned, Mark::edge, second, map);
 }
 
 } // namespace portable

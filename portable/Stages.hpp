@@ -53,10 +53,10 @@ struct Level {
     std::int16_t* dy;
     Mark* map;
 
-    Plane<std::uint8_t> sourcePlane() const { return {source, width, height}; }
-    Plane<std::int16_t> dxPlane() const { return {dx, width, height}; }
-    Plane<std::int16_t> dyPlane() const { return {dy, width, height}; }
-    Plane<Mark> mapPlane() const { return {map, width, height}; }
+    Plane<std::uint8_t> source_plane() const { return {source, width, height}; }
+    Plane<std::int16_t> dx_plane() const { return {dx, width, height}; }
+    Plane<std::int16_t> dy_plane() const { return {dy, width, height}; }
+    Plane<Mark> map_plane() const { return {map, width, height}; }
 };
 
 /// 01: halves an image by averaging every 2x2 block

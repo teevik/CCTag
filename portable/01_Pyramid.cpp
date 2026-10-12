@@ -11,8 +11,8 @@ namespace cctag {
 namespace portable {
 
 void downsample(sycl::queue& queue, const Level& source_level, const Level& destination_level) {
-    const Plane<const std::uint8_t> src = source_level.sourcePlane();
-    const Plane<std::uint8_t> dest = destination_level.sourcePlane();
+    const Plane<const std::uint8_t> src = source_level.source_plane();
+    const Plane<std::uint8_t> dest = destination_level.source_plane();
 
     queue.parallel_for(sycl::range<2>(dest.height, dest.width), [=](sycl::id<2> id) {
         const int y = id[0];
