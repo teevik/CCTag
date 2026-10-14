@@ -12,11 +12,11 @@ namespace portable {
 
 namespace {
 
-/// tan(22.5°) and tan(67.5°), the bounds of the diagonal sector of non-maximum suppression
+// tan(22.5°) and tan(67.5°), the bounds of the diagonal sector of non-maximum suppression
 constexpr float tan22 = 0.41421356f;
 constexpr float tan67 = 2.41421356f;
 
-/// The gradient magnitude at index i in scan order, rounded
+/// The gradient magnitude at index i, rounded
 int magnitude(const Plane<const std::int16_t> dx, const Plane<const std::int16_t> dy, int i) {
     const int gx = dx[i];
     const int gy = dy[i];

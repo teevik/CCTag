@@ -15,8 +15,8 @@
 namespace cctag {
 namespace portable {
 
-/// Detects the markers of a gray image, with the pyramid built on the SYCL device and the stages
-/// not yet ported run on the CPU. Takes the arguments of cctag::cctagDetection that it uses.
+/// Detects the markers of a gray image, running the ported stages on the SYCL device. Takes the
+/// arguments of cctag::cctagDetection that it uses.
 void detect(
     boost::ptr_list<ICCTag>& markers,
     int pipe_id,

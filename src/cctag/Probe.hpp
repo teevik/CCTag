@@ -13,7 +13,7 @@
 
 namespace cctag {
 
-/// One image of a pyramid level
+/// One image of a pyramid level, borrowed for the duration of the probe call that receives it
 struct Plane
 {
     std::uint32_t width;

@@ -33,6 +33,36 @@ class NearbyPoint;
 namespace cctag {
 namespace identification {
 
+/**
+ * @brief A replacement for the CPU search of the imaged center in refineConicFamilyGlob,
+ * e.g. on another device.
+ */
+class CenterSearch
+{
+public:
+  virtual ~CenterSearch() = default;
+
+  /**
+   * @brief Repeat the grid search of imageCenterOptimizationGlob, shrinking the neighbourhood
+   * as refineConicFamilyGlob does.
+   *
+   * @param[inout] mHomography homography of the optimal imaged center
+   * @param[inout] center imaged center, optimized
+   * @param[out] residual residual of the optimal imaged center (costFunctionGlob)
+   * @param[in] vCuts cuts whose rectified signals are compared, their signals are not written
+   * @param[in] outerEllipse outer ellipse
+   * @param[in] params parameters of the cctag algorithm
+   * @return false if a grid had no readable point, as imageCenterOptimizationGlob
+   */
+  virtual bool refine(
+          Eigen::Matrix3f & mHomography,
+          cctag::Point2d<Eigen::Vector3f> & center,
+          float & residual,
+          const std::vector<cctag::ImageCut> & vCuts,
+          const cctag::numerical::geometry::Ellipse & outerEllipse,
+          const cctag::Parameters & params) = 0;
+};
+
 enum NeighborType {
   GRID,
   CIRCULAR,
@@ -74,6 +104,7 @@ int identify_step_1(
  * @param[in] radiusRatios bank of radius ratios along with their associated IDs.
  * @param[in] src original gray scale image (original scale, uchar)
  * @param[in] params set of parameters
+ * @param[in] centerSearch replaces the imaged center search if not null
  * @return status of the markers (c.f. all the possible status are located in CCTag.hpp) 
  */
 int identify_step_2(
@@ -83,7 +114,8 @@ int identify_step_2(
 	const std::vector< std::vector<float> > & radiusRatios,
 	const cv::Mat & src,
     cctag::TagPipe* cudaPipe,
-	const cctag::Parameters & params);
+	const cctag::Parameters & params,
+    CenterSearch* centerSearch = nullptr);
 
 using RadiusRatioBank = std::vector<std::vector<float>>;
 using CutSelectionVec =  std::vector< std::pair< cctag::Point2d<Eigen::Vector3f>, cctag::ImageCut>>;
@@ -243,6 +275,7 @@ void getSignals(
  * @param[in] src source image
  * @param[in] outerEllipse outer ellipse
  * @param[in] params parameters of the cctag algorithm
+ * @param[in] centerSearch replaces the imaged center search if not null
  * @return true if the optimization has found a solution, false otherwise.
  */
 bool refineConicFamilyGlob(
@@ -255,7 +288,8 @@ bool refineConicFamilyGlob(
         const cctag::numerical::geometry::Ellipse & outerEllipse,
         const cctag::Parameters & params,
         cctag::NearbyPoint* cctag_pointer_buffer,
-        float & residual);
+        float & residual,
+        CenterSearch* centerSearch = nullptr);
 
 /**
  * @brief Convex optimization of the imaged center within a point's neighbourhood.

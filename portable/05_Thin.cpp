@@ -76,9 +76,7 @@ void thin_pass(
             out.at(y, x) = Mark::none;
             return;
         }
-        const auto at = [=](int u, int v) -> std::uint32_t {
-            return in.at(y + v, x + u) == edge;
-        };
+        const auto at = [=](int u, int v) -> std::uint32_t { return in.at(y + v, x + u) == edge; };
         const Neighbourhood n = at(1, 0) | at(1, -1) << 1 | at(0, -1) << 2 | at(-1, -1) << 3
             | at(-1, 0) << 4 | at(-1, 1) << 5 | at(0, 1) << 6 | at(1, 1) << 7;
         const bool keep = at(0, 0) && ((lut[n / 32] >> n % 32) & 1);

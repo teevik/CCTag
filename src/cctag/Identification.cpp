@@ -804,6 +804,7 @@ void computeHomographyFromEllipseAndImagedCenter(
  * @param[in] src source image
  * @param[in] ellipse outer ellipse (todo: is that already in the cctag object?)
  * @param[in] params parameters of the cctag algorithm
+ * @param[in] centerSearch replaces the imaged center search if not null
  * @return true if the optimization has found a solution, false otherwise.
  */
 bool refineConicFamilyGlob(
@@ -816,7 +817,8 @@ bool refineConicFamilyGlob(
         const cctag::numerical::geometry::Ellipse & outerEllipse,
         const cctag::Parameters & params,
         cctag::NearbyPoint* cctag_pointer_buffer,
-        float & residual)
+        float & residual,
+        CenterSearch* centerSearch)
 {
     using namespace cctag::numerical;
 
@@ -829,8 +831,13 @@ bool refineConicFamilyGlob(
     CCTagVisualDebug::instance().newSession( "centerOpt" );
     CCTagVisualDebug::instance().drawPoint( optimalPoint, cctag::color_green );
 
+    if( centerSearch ) {
+        if( ! centerSearch->refine( mHomography, optimalPoint, residual, vCuts, outerEllipse, params ) ) {
+            return false;
+        }
+    }
 #ifdef CCTAG_WITH_CUDA
-    if( cudaPipe ) {
+    else if( cudaPipe ) {
         bool success = cudaPipe->imageCenterRetrieve(
             tagIndex,      // in
             optimalPoint,  // out
@@ -842,8 +849,9 @@ bool refineConicFamilyGlob(
         if( ! success ) {
             return false;
         }
-    } else { // not CUDA
+    }
 #endif // CCTAG_WITH_CUDA
+    else { // CPU
 
         boost::posix_time::ptime tstart( boost::posix_time::microsec_clock::local_time() );
 
@@ -886,9 +894,7 @@ bool refineConicFamilyGlob(
   const float spendTime = d.total_milliseconds();
   DO_TALK( CCTAG_COUT_DEBUG( "Optimization result: " << optimalPoint << ", duration: " << spendTime ); )
 
-#ifdef CCTAG_WITH_CUDA
-    } // not CUDA
-#endif // CCTAG_WITH_CUDA
+    } // CPU
     CCTagVisualDebug::instance().drawPoint( optimalPoint, cctag::color_red );
   
     // B. Get the signal associated to the optimal homography/imaged center //////
@@ -1309,6 +1315,7 @@ int identify_step_1(
  * @param[in] src original gray scale image (original scale, uchar)
  * @param[inout] cudaPipe entry object for processing on the GPU
  * @param[in] params set of parameters
+ * @param[in] centerSearch replaces the imaged center search if not null
  * @return status of the markers (c.f. all the possible status are located in CCTag.hpp) 
  */
 int identify_step_2(
@@ -1318,7 +1325,8 @@ int identify_step_2(
   const std::vector< std::vector<float> > & radiusRatios, // todo: directly use the CCTagBank
   const cv::Mat &  src,
   cctag::TagPipe* cudaPipe,
-  const cctag::Parameters & params)
+  const cctag::Parameters & params,
+  CenterSearch* centerSearch)
 {
   // Get the outer ellipse in its original scale, i.e. in src.
   const cctag::numerical::geometry::Ellipse & ellipse = cctag.rescaledOuterEllipse();
@@ -1347,7 +1355,8 @@ int identify_step_2(
 #else
                         nullptr,
 #endif
-                        residual
+                        residual,
+                        centerSearch
                         );
   
   cctag.setQuality(1.f/residual);
