@@ -49,11 +49,13 @@ public:
     void post( int n = 1 );
 };
 
-class TagThread : public std::thread
+class TagThread
 {
     TagThreads* _creator;
     TagPipe*    _pipe;
     int         _my_layer;
+    // Declared last so it starts only after the members above are set
+    std::thread _thread;
 
 public:
     TagThread( TagThreads* creator, TagPipe* pipe, int layer );

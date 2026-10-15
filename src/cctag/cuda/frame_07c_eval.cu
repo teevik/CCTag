@@ -129,7 +129,10 @@ void count_winners( FrameMetaPtr&                   meta,
  * inner_points is a list of indices into that list, containing the sorted,
  * unique indices of chosen inner points.
  */
+// Launched with 32x32 blocks, without the bound nvcc (12.9) allocates 80 registers per thread,
+// more than a 1024-thread block may use, and every launch fails with cudaErrorLaunchOutOfResources.
 __global__
+__launch_bounds__( 1024 )
 void eval_chosen( FrameMetaPtr             meta,
                   DevEdgeList<TriplePoint> voters,       // input-output
                   const float*             chosen_flow_length, // input

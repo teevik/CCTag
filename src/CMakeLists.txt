@@ -187,6 +187,8 @@ if(CCTAG_WITH_CUDA)
    target_link_libraries(CCTag pthread dl)
   endif()
 
+  target_compile_definitions(CCTag PUBLIC CCTAG_WITH_CUDA)
+
   if(CCTAG_HAVE_SHFL_DOWN_SYNC)
     target_compile_definitions(CCTag PRIVATE "-DCCTAG_HAVE_SHFL_DOWN_SYNC")
   endif()
