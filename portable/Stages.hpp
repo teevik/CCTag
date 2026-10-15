@@ -82,17 +82,14 @@ struct Level {
     }
 };
 
-/// The device buffers of the center search
+/// The buffers of the center search. The homographies and residuals are in pinned host memory the
+/// device reads and writes directly, as they are a few hundred bytes per call.
 struct CenterBuffers {
     std::uint32_t points;
     std::uint32_t cuts;
     std::uint32_t samples;
     Homography* homographies;
     Cut* cut;
-    /// The rectified signals, [point][cut][sample]
-    float* signals;
-    /// Whether a cut leaves the image, [point][cut]
-    std::uint8_t* out_of_bounds;
     /// The residual of every point
     float* residuals;
 };
@@ -129,7 +126,7 @@ void link(
 void vote(sycl::queue& queue, const Level& level, std::uint32_t n_crowns, float ratio_voting);
 
 /// 08: Computes the residual of costFunctionGlob for every homography, or -1 where no pair of cuts
-/// lies in the image
+/// lies in the image. The signals of one homography, cuts * samples floats, must fit local memory.
 void center_costs(
     sycl::queue& queue,
     const Level& level,

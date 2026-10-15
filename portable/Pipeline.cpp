@@ -43,8 +43,6 @@ void release_centers(Pipeline& pipeline) {
     const CenterBuffers& centers = pipeline.centers;
     sycl::free(centers.homographies, pipeline.queue);
     sycl::free(centers.cut, pipeline.queue);
-    sycl::free(centers.signals, pipeline.queue);
-    sycl::free(centers.out_of_bounds, pipeline.queue);
     sycl::free(centers.residuals, pipeline.queue);
     pipeline.centers = {};
 }
@@ -114,16 +112,22 @@ void allocate_centers(
     pipeline.queue.wait();
     release_centers(pipeline);
     sycl::queue& queue = pipeline.queue;
-    const std::size_t signals = std::size_t(points) * cuts;
+    // center_costs keeps the signals of a homography and their out of bounds flags in local memory
+    const std::size_t needed = std::size_t(cuts) * samples * sizeof(float) + cuts;
+    const std::size_t available = queue.get_device().get_info<sycl::info::device::local_mem_size>();
+    if (needed > available) {
+        throw std::length_error(
+            "allocate_centers: the signals of a point do not fit local memory ("
+            + std::to_string(needed) + " bytes, max: " + std::to_string(available) + ")"
+        );
+    }
     pipeline.centers = {
         points,
         cuts,
         samples,
-        sycl::malloc_device<Homography>(points, queue),
+        sycl::malloc_host<Homography>(points, queue),
         sycl::malloc_device<Cut>(cuts, queue),
-        sycl::malloc_device<float>(signals * samples, queue),
-        sycl::malloc_device<std::uint8_t>(signals, queue),
-        sycl::malloc_device<float>(points, queue)
+        sycl::malloc_host<float>(points, queue)
     };
 }
 
@@ -260,7 +264,7 @@ void center_costs(
     }
 
     sycl::queue& queue = pipeline.queue;
-    queue.memcpy(centers.homographies, homographies.data(), points * sizeof(Homography));
+    std::copy(homographies.begin(), homographies.end(), centers.homographies);
     center_costs(
         queue,
         pipeline.levels[0],
@@ -269,7 +273,8 @@ void center_costs(
         pipeline.cut_count,
         pipeline.samples
     );
-    queue.memcpy(residuals.data(), centers.residuals, points * sizeof(float)).wait();
+    queue.wait();
+    std::copy(centers.residuals, centers.residuals + points, residuals.begin());
 }
 
 } // namespace portable

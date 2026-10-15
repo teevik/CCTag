@@ -12,6 +12,9 @@ namespace portable {
 
 namespace {
 
+/// The work-items per homography, more than the 231 pairs of the default 22 cuts
+constexpr std::uint32_t group_size = 256;
+
 /// The point (x, y) mapped by the row-major homography m, as applyHomography
 void apply(const float* m, float x, float y, float& x_res, float& y_res) {
     const float u = m[0] * x + m[1] * y + m[2];
@@ -88,39 +91,47 @@ void center_costs(
     const Plane<const std::uint8_t> image = level.source_plane();
     const Homography* homographies = buffers.homographies;
     const Cut* cut = buffers.cut;
-    float* signals = buffers.signals;
-    std::uint8_t* out_of_bounds = buffers.out_of_bounds;
     float* residuals = buffers.residuals;
 
-    queue.parallel_for(sycl::range<1>(std::size_t(points) * cuts), [=](sycl::id<1> id) {
-        const std::size_t i = id[0];
-        out_of_bounds[i] =
-            extract(image, homographies[i / cuts], cut[i % cuts], samples, signals + i * samples);
-    });
+    // One work-group per homography: each work-item samples a cut into local memory, then sums the
+    // squared differences of a pair of cuts, as costFunctionGlob
+    queue.submit([&](sycl::handler& handler) {
+        const sycl::local_accessor<float, 1> signals(std::size_t(cuts) * samples, handler);
+        const sycl::local_accessor<std::uint8_t, 1> out_of_bounds(cuts, handler);
+        const auto kernel = [=](sycl::nd_item<1> item) {
+            const std::uint32_t point = item.get_group(0);
+            const std::uint32_t local = item.get_local_id(0);
+            for (std::uint32_t c = local; c < cuts; c += group_size) {
+                out_of_bounds[c] =
+                    extract(image, homographies[point], cut[c], samples, &signals[c * samples]);
+            }
+            sycl::group_barrier(item.get_group());
 
-    // The mean squared difference over the pairs of cuts in the image, as costFunctionGlob
-    queue.parallel_for(sycl::range<1>(points), [=](sycl::id<1> id) {
-        const std::size_t p = id[0];
-        const float* signal = signals + p * cuts * samples;
-        const std::uint8_t* outside = out_of_bounds + p * cuts;
-        float res = 0;
-        std::uint32_t pairs = 0;
-        for (std::uint32_t i = 0; i + 1 < cuts; ++i) {
-            if (outside[i]) {
-                continue;
-            }
-            for (std::uint32_t j = i + 1; j < cuts; ++j) {
-                if (outside[j]) {
-                    continue;
+            float sum = 0;
+            std::uint32_t pairs = 0;
+            std::uint32_t pair = 0;
+            for (std::uint32_t i = 0; i + 1 < cuts; ++i) {
+                for (std::uint32_t j = i + 1; j < cuts; ++j, ++pair) {
+                    if (pair % group_size != local || out_of_bounds[i] || out_of_bounds[j]) {
+                        continue;
+                    }
+                    for (std::uint32_t k = 0; k < samples; ++k) {
+                        const float d = signals[i * samples + k] - signals[j * samples + k];
+                        sum += d * d;
+                    }
+                    ++pairs;
                 }
-                for (std::uint32_t k = 0; k < samples; ++k) {
-                    const float d = signal[i * samples + k] - signal[j * samples + k];
-                    res += d * d;
-                }
-                ++pairs;
             }
-        }
-        residuals[p] = pairs > 0 ? res / pairs : -1.f;
+            sum = sycl::reduce_over_group(item.get_group(), sum, sycl::plus<float>());
+            pairs = sycl::reduce_over_group(item.get_group(), pairs, sycl::plus<std::uint32_t>());
+            if (local == 0) {
+                residuals[point] = pairs > 0 ? sum / pairs : -1.f;
+            }
+        };
+        handler.parallel_for(
+            sycl::nd_range<1>(std::size_t(points) * group_size, group_size),
+            kernel
+        );
     });
 }
 
