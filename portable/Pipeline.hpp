@@ -60,7 +60,15 @@ struct Pipeline;
 /// the same time.
 Pipeline& pipeline(int pipe_id);
 
+/// The edge map of every level right after suppress and right after hysteresis, tightly packed,
+/// one Mark per pixel
+struct MapSnapshots {
+    std::vector<std::vector<std::uint8_t>> suppress;
+    std::vector<std::vector<std::uint8_t>> hysteresis;
+};
+
 /// Uploads a tightly packed gray image, builds the pyramid and runs every stage on every level.
+/// With snapshots, also copies the intermediate edge maps there, ready when load returns.
 /// Throws std::invalid_argument if n_crowns is more than max_crowns
 void load(
     Pipeline& pipeline,
@@ -72,7 +80,8 @@ void load(
     float canny_thr_high,
     std::uint32_t dist_search,
     std::size_t n_crowns,
-    float ratio_voting
+    float ratio_voting,
+    MapSnapshots* snapshots = nullptr
 );
 
 /// Copies the source image of a level into a packed host image

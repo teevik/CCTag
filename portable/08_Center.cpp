@@ -33,8 +33,10 @@ float bilinear(Plane<const std::uint8_t> image, float x, float y) {
     const float fy = y - py;
     const float fx1 = 1.0f - fx;
     const float fy1 = 1.0f - fy;
-    return (image.at(py, px) * (fx1 * fy1) + image.at(py, px + 1) * (fx * fy1)
-            + image.at(py + 1, px) * (fx1 * fy) + image.at(py + 1, px + 1) * (fx * fy))
+    return (image.at(py, px) * (fx1 * fy1)
+            + image.at(py, px + 1) * (fx * fy1)
+            + image.at(py + 1, px) * (fx1 * fy)
+            + image.at(py + 1, px + 1) * (fx * fy))
         / 2;
 }
 
@@ -66,7 +68,9 @@ bool extract(
         float x_res;
         float y_res;
         apply(homography.h, x, y, x_res, y_res);
-        if (x_res >= 0.f && x_res < image.width - 1.f && y_res >= 0.f
+        if (x_res >= 0.f
+            && x_res < image.width - 1.f
+            && y_res >= 0.f
             && y_res < image.height - 1.f) {
             signal[i] = bilinear(image, x_res, y_res);
         } else {

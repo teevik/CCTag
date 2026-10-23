@@ -243,6 +243,8 @@ void detect(
     }
 
     const int level_count = params._numberOfProcessedMultiresLayers;
+    // The intermediate edge maps are only needed by the probe
+    MapSnapshots snapshots;
     load(
         pipe,
         gray_src.data,
@@ -253,7 +255,8 @@ void detect(
         params._cannyThrHigh,
         params._distSearch,
         params._nCrowns,
-        params._ratioVoting
+        params._ratioVoting,
+        probe ? &snapshots : nullptr
     );
 
     // The gradient and edge images are only needed by the probe
@@ -271,6 +274,10 @@ void detect(
             download_edges(pipe, i, edges.data);
             probe->pyramid(i, plane(sources.back()));
             probe->gradient(i, plane(dx), plane(dy));
+            const cv::Mat suppressed(height, width, CV_8UC1, snapshots.suppress[i].data());
+            const cv::Mat connected(height, width, CV_8UC1, snapshots.hysteresis[i].data());
+            probe->stage("suppress", i, plane(suppressed));
+            probe->stage("hysteresis", i, plane(connected));
             probe->edges(i, plane(edges));
         }
         width /= 2;

@@ -20,6 +20,7 @@ AllowAllParametersOfDeclarationOnNextLine: false
 AlignOperands: DontAlign
 BreakBeforeBinaryOperators: NonAssignment
 BreakBeforeTernaryOperators: true
+BreakBinaryOperations: RespectPrecedence
 
 # Keep empty bodies and lambdas on one line when they fit
 AllowShortFunctionsOnASingleLine: Empty

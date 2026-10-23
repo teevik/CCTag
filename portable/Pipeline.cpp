@@ -67,7 +67,9 @@ void release(Pipeline& pipeline) {
 
 void allocate(Pipeline& pipeline, std::uint32_t width, std::uint32_t height, std::uint32_t count) {
     const std::vector<Level>& levels = pipeline.levels;
-    if (levels.size() == count && count > 0 && levels[0].width == width
+    if (levels.size() == count
+        && count > 0
+        && levels[0].width == width
         && levels[0].height == height) {
         return;
     }
@@ -118,7 +120,10 @@ void allocate_centers(
     if (needed > available) {
         throw std::length_error(
             "allocate_centers: the signals of a point do not fit local memory ("
-            + std::to_string(needed) + " bytes, max: " + std::to_string(available) + ")"
+            + std::to_string(needed)
+            + " bytes, max: "
+            + std::to_string(available)
+            + ")"
         );
     }
     pipeline.centers = {
@@ -129,6 +134,12 @@ void allocate_centers(
         sycl::malloc_device<Cut>(cuts, queue),
         sycl::malloc_host<float>(points, queue)
     };
+}
+
+/// Copies the edge map of a level into dst once the queue reaches the copy
+void snapshot(sycl::queue& queue, const Level& level, std::vector<std::uint8_t>& dst) {
+    dst.resize(std::size_t(level.width) * level.height);
+    queue.memcpy(dst.data(), level.map, dst.size());
 }
 
 } // namespace
@@ -142,8 +153,10 @@ Pipeline& pipeline(int pipe_id) {
     const auto inserted = pipelines.try_emplace(pipe_id);
     Pipeline& pipeline = inserted.first->second;
     if (inserted.second) {
-        std::cerr << "SYCL device: "
-                  << pipeline.queue.get_device().get_info<sycl::info::device::name>() << std::endl;
+        std::cerr
+            << "SYCL device: "
+            << pipeline.queue.get_device().get_info<sycl::info::device::name>()
+            << std::endl;
     }
     return pipeline;
 }
@@ -158,12 +171,16 @@ void load(
     float canny_thr_high,
     std::uint32_t dist_search,
     std::size_t n_crowns,
-    float ratio_voting
+    float ratio_voting,
+    MapSnapshots* snapshots
 ) {
     if (n_crowns > max_crowns) {
         throw std::invalid_argument(
-            "load: too many crowns to vote (nCrowns: " + std::to_string(n_crowns)
-            + ", max: " + std::to_string(max_crowns) + ")"
+            "load: too many crowns to vote (nCrowns: "
+            + std::to_string(n_crowns)
+            + ", max: "
+            + std::to_string(max_crowns)
+            + ")"
         );
     }
     allocate(pipeline, width, height, levels);
@@ -177,10 +194,21 @@ void load(
     // cvRecodedCanny scales the thresholds by 256 to compare with the magnitude
     const float low = canny_thr_low * 256;
     const float high = canny_thr_high * 256;
-    for (const Level& level : pyramid) {
+    if (snapshots) {
+        snapshots->suppress.assign(pyramid.size(), {});
+        snapshots->hysteresis.assign(pyramid.size(), {});
+    }
+    for (std::size_t i = 0; i < pyramid.size(); ++i) {
+        const Level& level = pyramid[i];
         gradient(queue, level, pipeline.intermediate);
         suppress(queue, level, low, high);
+        if (snapshots) {
+            snapshot(queue, level, snapshots->suppress[i]);
+        }
         hysteresis(queue, level);
+        if (snapshots) {
+            snapshot(queue, level, snapshots->hysteresis[i]);
+        }
         thin(queue, level, reinterpret_cast<Mark*>(pipeline.intermediate));
         link(
             queue,
@@ -190,6 +218,9 @@ void load(
             pipeline.rows
         );
         vote(queue, level, std::uint32_t(n_crowns), ratio_voting);
+    }
+    if (snapshots) {
+        queue.wait();
     }
 }
 
@@ -221,8 +252,11 @@ void download_edgels(Pipeline& pipeline, std::uint32_t level, std::vector<Edgel>
     pipeline.queue.memcpy(&count, src.edgel_count, sizeof(count)).wait();
     if (count > src.capacity) {
         throw std::length_error(
-            "download_edgels: too many edge points (nb points: " + std::to_string(count)
-            + ", max: " + std::to_string(src.capacity) + ")"
+            "download_edgels: too many edge points (nb points: "
+            + std::to_string(count)
+            + ", max: "
+            + std::to_string(src.capacity)
+            + ")"
         );
     }
     dst.resize(count);
@@ -254,8 +288,11 @@ void center_costs(
     const std::size_t points = homographies.size();
     if (points > centers.points) {
         throw std::length_error(
-            "center_costs: too many homographies (nb homographies: " + std::to_string(points)
-            + ", max: " + std::to_string(centers.points) + ")"
+            "center_costs: too many homographies (nb homographies: "
+            + std::to_string(points)
+            + ", max: "
+            + std::to_string(centers.points)
+            + ")"
         );
     }
     residuals.resize(points);

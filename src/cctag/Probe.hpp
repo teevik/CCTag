@@ -32,6 +32,7 @@ class Probe
     virtual void pyramid(std::uint32_t level, const Plane& source) {}
     virtual void gradient(std::uint32_t level, const Plane& dx, const Plane& dy) {}
     virtual void edges(std::uint32_t level, const Plane& edges) {}
+    virtual void stage(const char* name, std::uint32_t level, const Plane& map) {}
 };
 
 } // namespace cctag

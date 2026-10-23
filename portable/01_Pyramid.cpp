@@ -22,8 +22,10 @@ void downsample(sycl::queue& queue, const Level& source_level, const Level& dest
         // Sum 2x2 block
         const int corner_y = 2 * y;
         const int corner_x = 2 * x;
-        const std::uint32_t sum = src.at(corner_y, corner_x) + src.at(corner_y, corner_x + 1)
-            + src.at(corner_y + 1, corner_x) + src.at(corner_y + 1, corner_x + 1);
+        const std::uint32_t sum = src.at(corner_y, corner_x)
+            + src.at(corner_y, corner_x + 1)
+            + src.at(corner_y + 1, corner_x)
+            + src.at(corner_y + 1, corner_x + 1);
 
         // Divide, round to nearest and store
         dest.at(y, x) = static_cast<std::uint8_t>((sum + 2) / 4);
