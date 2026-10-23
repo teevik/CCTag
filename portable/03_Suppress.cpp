@@ -37,27 +37,21 @@ void suppress(sycl::queue& queue, const Level& level, float low, float high) {
     const int height = level.height;
     const auto size = std::size_t(width) * std::size_t(height);
 
-    auto dx_src = std::vector<std::int16_t>(size);
-    auto dy_src = std::vector<std::int16_t>(size);
-    queue.memcpy(dx_src.data(), level.dx, size * sizeof(std::int16_t));
-    queue.memcpy(dy_src.data(), level.dy, size * sizeof(std::int16_t));
-    queue.wait();
-
-    const auto dx = Plane<std::int16_t>{dx_src.data(), level.width, level.height};
-    const auto dy = Plane<std::int16_t>{dy_src.data(), level.width, level.height};
+    const auto dx = level.dx_plane();
+    const auto dy = level.dy_plane();
 
     const auto magnitude_at = [=](int i) -> int {
         const int gx = dx[i];
         const int gy = dy[i];
-        return std::lrint(std::sqrt(float(gx * gx + gy * gy)));
+        return int(sycl::rint(sycl::sqrt(float(gx * gx + gy * gy))));
     };
 
     // The gradient direction at index i, rounded to the nearest of the four axes through it
     const auto direction_at = [=](int i) -> Direction {
         const int gx = dx[i];
         const int gy = dy[i];
-        const float ax = std::abs(float(gx));
-        const float ay = std::abs(float(gy));
+        const float ax = sycl::fabs(float(gx));
+        const float ay = sycl::fabs(float(gy));
 
         if (ay < tan22_5 * ax) {
             return {1, false};
@@ -81,23 +75,21 @@ void suppress(sycl::queue& queue, const Level& level, float low, float high) {
             && (direction.diagonal ? m > magnitude_after : m >= magnitude_after);
     };
 
-    std::vector<Mark> map(size, Mark::none);
+    queue.fill(level.map, Mark::none, size);
 
-    for (int y = 1; y < height - 1; ++y) {
-        for (int x = 1; x < width - 1; ++x) {
-            const int i = y * width + x;
-            const int magnitude = magnitude_at(i);
+    // Don't loop over the border pixels
+    queue.parallel_for(sycl::range<2>(height - 2, width - 2), [=](sycl::id<2> id) {
+        const int y = id[0] + 1;
+        const int x = id[1] + 1;
+        const int i = y * width + x;
+        const int magnitude = magnitude_at(i);
 
-            if (magnitude <= low || !is_maximum(i, magnitude)) {
-                continue;
-            }
-
-            map[i] = magnitude > high ? Mark::strong : Mark::weak;
+        if (magnitude <= low || !is_maximum(i, magnitude)) {
+            return;
         }
-    }
 
-    // Wait, as map is freed on return
-    queue.memcpy(level.map, map.data(), size * sizeof(Mark)).wait();
+        level.map[i] = magnitude > high ? Mark::strong : Mark::weak;
+    });
 }
 
 } // namespace portable
