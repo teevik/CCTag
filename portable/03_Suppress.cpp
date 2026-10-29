@@ -24,7 +24,7 @@ struct Direction {
 
 } // namespace
 
-// Runs canny edge supression based on `level.dx` and `level.dy`, storing the result in `level.map`
+// Runs canny edge suppression based on `level.dx` and `level.dy`, storing the result in `level.map`
 // Conditions:
 // - `none` if:
 //   - `magnitude <= low`
@@ -35,10 +35,10 @@ struct Direction {
 void suppress(sycl::queue& queue, const Level& level, float low, float high) {
     const int width = level.width;
     const int height = level.height;
-    const auto size = std::size_t(width) * std::size_t(height);
 
     const auto dx = level.dx_plane();
     const auto dy = level.dy_plane();
+    const auto map = level.map_plane();
 
     const auto magnitude_at = [=](int i) -> int {
         const int gx = dx[i];
@@ -60,6 +60,7 @@ void suppress(sycl::queue& queue, const Level& level, float low, float high) {
             return {width, false};
         }
 
+        // y points down, so a gradient with gx and gy of the same sign points down and right
         const bool same_sign = (gx < 0) == (gy < 0);
         return {same_sign ? width + 1 : width - 1, true};
     };
@@ -75,20 +76,21 @@ void suppress(sycl::queue& queue, const Level& level, float low, float high) {
             && (direction.diagonal ? m > magnitude_after : m >= magnitude_after);
     };
 
-    queue.fill(level.map, Mark::none, size);
-
-    // Don't loop over the border pixels
-    queue.parallel_for(sycl::range<2>(height - 2, width - 2), [=](sycl::id<2> id) {
-        const int y = id[0] + 1;
-        const int x = id[1] + 1;
+    // Parallel for all pixels
+    queue.parallel_for(sycl::range<2>(height, width), [=](sycl::id<2> id) {
+        const int y = id[0];
+        const int x = id[1];
         const int i = y * width + x;
-        const int magnitude = magnitude_at(i);
 
-        if (magnitude <= low || !is_maximum(i, magnitude)) {
+        const bool is_border = x == 0 || y == 0 || x == width - 1 || y == height - 1;
+
+        const int magnitude = magnitude_at(i);
+        if (is_border || magnitude <= low || !is_maximum(i, magnitude)) {
+            map[i] = Mark::none;
             return;
         }
 
-        level.map[i] = magnitude > high ? Mark::strong : Mark::weak;
+        map[i] = magnitude > high ? Mark::strong : Mark::weak;
     });
 }
 
