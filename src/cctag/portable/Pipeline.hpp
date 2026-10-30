@@ -20,15 +20,14 @@ enum class Mark : std::uint8_t {
     strong = 2
 };
 
-/// The SYCL queue and device images of one pipe id
+/// The state of each pipeline, one per pipe id
 struct Pipeline;
 
-/// The pipeline of a pipe id, created on first use. Detections on different pipelines can run at
-/// the same time.
+/// The pipeline of a pipe id, created on first use
 Pipeline& pipeline(int pipe_id);
 
-/// Uploads a tightly packed gray image, builds the pyramid and runs every stage on every level
-void load(
+/// Uploads an image, builds the pyramid and runs every stage on every level
+void run(
     Pipeline& pipeline,
     const std::uint8_t* image,
     std::uint32_t width,
@@ -38,13 +37,13 @@ void load(
     float canny_thr_high
 );
 
-/// Copies the source image of a level into a packed host image
+/// Copies the source image of a level into host memory
 void download_source(Pipeline& pipeline, std::uint32_t level, std::uint8_t* dst);
 
-/// Copies the gradient of a level into packed host images
+/// Copies the gradient of a level into host memory
 void download_gradient(Pipeline& pipeline, std::uint32_t level, std::int16_t* dx, std::int16_t* dy);
 
-/// Copies the edge map of a level, one Mark per pixel, into a packed host image
+/// Copies the edge map of a level into host memory
 void download_map(Pipeline& pipeline, std::uint32_t level, Mark* dst);
 
 } // namespace portable

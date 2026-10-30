@@ -99,9 +99,9 @@ struct Buffers {
     }
 };
 
-/// Enqueues a stage on level i, as load() does. For the pyramid, the downsample of level i into
+/// Enqueues a stage on level i, as run() does. For the pyramid, the downsample of level i into
 /// level i + 1
-void run(Stage stage, Buffers& buffers, const Params& params, std::size_t i) {
+void enqueue_stage(Stage stage, Buffers& buffers, const Params& params, std::size_t i) {
     sycl::queue& queue = buffers.queue;
     const Level& level = buffers.levels[i];
     switch (stage) {
@@ -248,8 +248,8 @@ int main(int argc, char** argv) {
     app.add_option(
            "--level",
            level_arg,
-           "Level to run the stage on, or all for every level like load. For pyramid, the level "
-           "downsampled into the next"
+           "Level to run the stage on, or all for every level as a detection does. For pyramid, "
+           "the level downsampled into the next"
     )
         ->capture_default_str();
     app.add_option("--batch", batch, "Calls per timed batch")
@@ -315,14 +315,14 @@ int main(int argc, char** argv) {
     Buffers buffers(queue, image.cols, image.rows, level_count);
     const std::vector<Level>& levels = buffers.levels;
 
-    // Setup: the stages before this one on every level, as load() runs them
+    // Setup: the stages before this one on every level, as run() does
     queue.memcpy(levels[0].source, image.data, std::size_t(image.cols) * image.rows);
     for (std::size_t i = 1; i < levels.size(); ++i) {
         cctag::portable::downsample(queue, levels[i - 1], levels[i]);
     }
     for (std::size_t i = 0; i < levels.size(); ++i) {
         for (Stage before = Stage::gradient; before < stage; before = Stage(int(before) + 1)) {
-            run(before, buffers, params, i);
+            enqueue_stage(before, buffers, params, i);
         }
     }
     queue.wait();
@@ -346,7 +346,7 @@ int main(int argc, char** argv) {
     const auto call = [&]() {
         restore();
         for (const std::size_t i : selected) {
-            run(stage, buffers, params, i);
+            enqueue_stage(stage, buffers, params, i);
         }
     };
 

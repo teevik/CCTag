@@ -18,7 +18,7 @@
 namespace cctag {
 namespace portable {
 
-/// A device-side view of one tightly packed image plane, cheap to capture into a kernel
+/// A view of image with given width and height in contiguous buffer
 template <typename T>
 struct Plane {
     T* data;
@@ -46,7 +46,7 @@ struct Plane {
     }
 };
 
-/// The device images of one pyramid level, tightly packed
+/// The images of one pyramid level
 struct Level {
     std::uint32_t width;
     std::uint32_t height;
@@ -75,8 +75,7 @@ void downsample(sycl::queue& queue, const Level& src, const Level& dst);
 /// 02: Computes dx and dy of a level
 void gradient(sycl::queue& queue, const Level& level, float* scratch);
 
-/// 03: Canny non-maximum suppression and double thresholding, marks local maxima strong above high
-/// and weak above low
+/// 03: Canny non-maximum suppression and double thresholding
 void suppress(sycl::queue& queue, const Level& level, float low, float high);
 
 } // namespace portable

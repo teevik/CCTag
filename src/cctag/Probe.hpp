@@ -13,7 +13,7 @@
 
 namespace cctag {
 
-/// One image of a pyramid level, borrowed for the duration of the probe call that receives it
+/// One image of a pyramid level
 struct Plane
 {
     std::uint32_t width;
@@ -23,7 +23,7 @@ struct Plane
     const void* data;
 };
 
-/// Observes the intermediate results of a detection
+/// Observes the results while running CCTag
 class Probe
 {
   public:

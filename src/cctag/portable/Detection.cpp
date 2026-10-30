@@ -44,7 +44,9 @@ Plane plane(const cv::Mat& image) {
     };
 }
 
-/// Refits a marker found on an upper level to the edge points of level 0
+// WIP: Code for unfinished stages is copied over temporarily
+
+// TODO: Copied cctagMultiresDetection in Multiresolution.cpp
 void project_to_level0(CCTag& marker, const EdgePointCollection& level0) {
     const float scale = marker.scale();
     Ellipse rescaled_outer_ellipse = marker.rescaledOuterEllipse();
@@ -88,9 +90,7 @@ struct HostLevel {
     cv::Mat edges;
 };
 
-/// Canny hysteresis as the edge tracking of cvRecodedCanny: every weak pixel connected to a strong
-/// one through 8-neighbours becomes strong. Suppress leaves the border none, so every marked pixel
-/// has all its neighbours in the image.
+// TODO: temporary until hysteresis is ported to SYCL
 void hysteresis(cv::Mat& map) {
     const std::ptrdiff_t width = map.cols;
     Mark* marks = map.ptr<Mark>();
@@ -142,17 +142,15 @@ void detect(
     assert(gray_src.type() == CV_8U);
 
     const int level_count = params._numberOfProcessedMultiresLayers;
-    load(
-        pipe,
+    run(pipe,
         gray_src.data,
         gray_src.cols,
         gray_src.rows,
         level_count,
         params._cannyThrLow,
-        params._cannyThrHigh
-    );
+        params._cannyThrHigh);
 
-    // Hysteresis and thinning run on the host, as in cvRecodedCanny and Level::setLevel
+    // TODO: Hysteresis and thinning in SYCL
     std::vector<HostLevel> levels;
     int width = gray_src.cols;
     int height = gray_src.rows;
@@ -187,13 +185,13 @@ void detect(
         height /= 2;
     }
 
-    // Every level gets a collection of the size of level 0, as in cctagMultiresDetection
+    // Every level gets a collection of the size of level 0
     std::vector<std::unique_ptr<EdgePointCollection>> edge_collections(level_count);
     for (auto& edge_collection : edge_collections) {
         edge_collection.reset(new EdgePointCollection(gray_src.cols, gray_src.rows));
     }
 
-    // Detect on every level, from the top of the pyramid down, as cctagMultiresDetection_inner
+    // TODO: Detect edges in SYCL
     CCTag::List found;
     for (int i = level_count - 1; i >= 0; --i) {
         const HostLevel& level = levels[i];
@@ -223,6 +221,7 @@ void detect(
         }
     }
 
+    // Bring every marker to level 0
     for (CCTag& marker : found) {
         if (marker.pyramidLevel() > 0) {
             project_to_level0(marker, *edge_collections[0]);
@@ -231,6 +230,7 @@ void detect(
         }
     }
 
+    // TODO: Identify markers in SYCL
     if (params._doIdentification) {
         const cv::Mat& src = levels[0].src;
         std::vector<std::vector<ImageCut>> v_selected_cuts(found.size());
@@ -266,7 +266,7 @@ void detect(
         }
     }
 
-    // Delete overlapping markers while keeping the best ones, in two passes as the legacy code does
+    // TODO: In SYCL
     CCTag::List markers_prelim, markers_final;
     for (const CCTag& marker : found) {
         update(markers_prelim, marker);

@@ -20,6 +20,10 @@ namespace cctag {
 namespace portable {
 
 struct Pipeline {
+    Pipeline() = default;
+    Pipeline(const Pipeline&) = delete;
+    Pipeline& operator=(const Pipeline&) = delete;
+
     sycl::queue queue{sycl::property::queue::in_order{}};
     std::vector<Level> levels;
     /// Temporary image the size of level 0, can be reused between passes
@@ -30,19 +34,22 @@ namespace {
 
 void release(Pipeline& pipeline) {
     pipeline.queue.wait();
-    for (const Level& level : pipeline.levels) {
+
+    for (const auto& level : pipeline.levels) {
         sycl::free(level.source, pipeline.queue);
         sycl::free(level.dx, pipeline.queue);
         sycl::free(level.dy, pipeline.queue);
         sycl::free(level.map, pipeline.queue);
     }
     pipeline.levels.clear();
+
     sycl::free(pipeline.intermediate, pipeline.queue);
     pipeline.intermediate = nullptr;
 }
 
 void allocate(Pipeline& pipeline, std::uint32_t width, std::uint32_t height, std::uint32_t count) {
-    const std::vector<Level>& levels = pipeline.levels;
+    const auto& levels = pipeline.levels;
+
     if (levels.size() == count
         && count > 0
         && levels[0].width == width
@@ -51,18 +58,23 @@ void allocate(Pipeline& pipeline, std::uint32_t width, std::uint32_t height, std
     }
 
     release(pipeline);
+
     pipeline.intermediate = sycl::malloc_device<float>(std::size_t(width) * height, pipeline.queue);
+
     for (std::uint32_t i = 0; i < count; ++i) {
-        const std::size_t size = std::size_t(width) * height;
-        // TODO: Struct initializer?
+        const auto size = std::size_t(width) * height;
+
         pipeline.levels.push_back(
-            {width,
-             height,
-             sycl::malloc_device<std::uint8_t>(size, pipeline.queue),
-             sycl::malloc_device<std::int16_t>(size, pipeline.queue),
-             sycl::malloc_device<std::int16_t>(size, pipeline.queue),
-             sycl::malloc_device<Mark>(size, pipeline.queue)}
+            Level{
+                .width = width,
+                .height = height,
+                .source = sycl::malloc_device<std::uint8_t>(size, pipeline.queue),
+                .dx = sycl::malloc_device<std::int16_t>(size, pipeline.queue),
+                .dy = sycl::malloc_device<std::int16_t>(size, pipeline.queue),
+                .map = sycl::malloc_device<Mark>(size, pipeline.queue)
+            }
         );
+
         width /= 2;
         height /= 2;
     }
@@ -71,23 +83,25 @@ void allocate(Pipeline& pipeline, std::uint32_t width, std::uint32_t height, std
 } // namespace
 
 Pipeline& pipeline(int pipe_id) {
-    // Never destroyed: AdaptiveCpp cannot free device memory from a static destructor
+    // Gets cleaned up on program exit
     static std::map<int, Pipeline>& pipelines = *new std::map<int, Pipeline>;
     static std::mutex mutex;
 
     const std::lock_guard<std::mutex> lock(mutex);
     const auto inserted = pipelines.try_emplace(pipe_id);
     Pipeline& pipeline = inserted.first->second;
+
     if (inserted.second) {
         std::cerr
             << "SYCL device: "
             << pipeline.queue.get_device().get_info<sycl::info::device::name>()
             << std::endl;
     }
+
     return pipeline;
 }
 
-void load(
+void run(
     Pipeline& pipeline,
     const std::uint8_t* image,
     std::uint32_t width,
