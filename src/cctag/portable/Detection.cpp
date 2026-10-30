@@ -46,7 +46,7 @@ Plane plane(const cv::Mat& image) {
 
 // WIP: Code for unfinished stages is copied over temporarily
 
-// TODO: Copied cctagMultiresDetection in Multiresolution.cpp
+// TODO: Copied from cctagMultiresDetection in Multiresolution.cpp
 void project_to_level0(CCTag& marker, const EdgePointCollection& level0) {
     const float scale = marker.scale();
     Ellipse rescaled_outer_ellipse = marker.rescaledOuterEllipse();
