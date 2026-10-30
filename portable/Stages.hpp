@@ -18,14 +18,6 @@
 namespace cctag {
 namespace portable {
 
-/// A pixel of the edge map: weak or strong until hysteresis, then edge or none
-enum class Mark : std::uint8_t {
-    none = 0,
-    weak = 1,
-    strong = 2,
-    edge = 255
-};
-
 /// A device-side view of one tightly packed image plane, cheap to capture into a kernel
 template <typename T>
 struct Plane {
@@ -62,11 +54,6 @@ struct Level {
     std::int16_t* dx;
     std::int16_t* dy;
     Mark* map;
-    /// The edge points in scan order, room for capacity of them
-    Edgel* edgels;
-    std::uint32_t capacity;
-    /// The number of edge pixels, which can exceed capacity
-    std::uint32_t* edgel_count;
 
     Plane<std::uint8_t> source_plane() const {
         return {source, width, height};
@@ -82,18 +69,6 @@ struct Level {
     }
 };
 
-/// The buffers of the center search. The homographies and residuals are in pinned host memory the
-/// device reads and writes directly, as they are a few hundred bytes per call.
-struct CenterBuffers {
-    std::uint32_t points;
-    std::uint32_t cuts;
-    std::uint32_t samples;
-    Homography* homographies;
-    Cut* cut;
-    /// The residual of every point
-    float* residuals;
-};
-
 /// 01: Halves an image by averaging every 2x2 block
 void downsample(sycl::queue& queue, const Level& src, const Level& dst);
 
@@ -103,38 +78,6 @@ void gradient(sycl::queue& queue, const Level& level, float* scratch);
 /// 03: Canny non-maximum suppression and double thresholding, marks local maxima strong above high
 /// and weak above low
 void suppress(sycl::queue& queue, const Level& level, float low, float high);
-
-/// 04: Canny hysteresis, makes every weak pixel connected to a strong one strong
-void hysteresis(sycl::queue& queue, const Level& level);
-
-/// 05: Thins the strong pixels of the map into edge pixels
-void thin(sycl::queue& queue, const Level& level, Mark* scratch);
-
-/// 06: Lists the edge pixels as edge points and links each to the first edge points its gradient
-/// descent reaches within dist_search steps both ways. index is scratch for one int per pixel, rows
-/// for one per row.
-void link(
-    sycl::queue& queue,
-    const Level& level,
-    std::uint32_t dist_search,
-    std::int32_t* index,
-    std::uint32_t* rows
-);
-
-/// 07: Every edge point follows its links across n_crowns crowns and votes for the edge point it
-/// ends on
-void vote(sycl::queue& queue, const Level& level, std::uint32_t n_crowns, float ratio_voting);
-
-/// 08: Computes the residual of costFunctionGlob for every homography, or -1 where no pair of cuts
-/// lies in the image. The signals of one homography, cuts * samples floats, must fit local memory.
-void center_costs(
-    sycl::queue& queue,
-    const Level& level,
-    const CenterBuffers& buffers,
-    std::uint32_t points,
-    std::uint32_t cuts,
-    std::uint32_t samples
-);
 
 } // namespace portable
 } // namespace cctag

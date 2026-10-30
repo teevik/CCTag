@@ -32,7 +32,6 @@
 
 namespace {
 
-using cctag::portable::Edgel;
 using cctag::portable::Level;
 using cctag::portable::Mark;
 using Clock = std::chrono::steady_clock;
@@ -42,30 +41,19 @@ using Json = nlohmann::ordered_json;
 enum class Stage {
     pyramid,
     gradient,
-    suppress,
-    hysteresis,
-    thin,
-    link,
-    vote
+    suppress
 };
 
 const std::map<std::string, Stage> stage_names = {
     {"pyramid", Stage::pyramid},
     {"gradient", Stage::gradient},
     {"suppress", Stage::suppress},
-    {"hysteresis", Stage::hysteresis},
-    {"thin", Stage::thin},
-    {"link", Stage::link},
-    {"vote", Stage::vote},
 };
 
 /// The detector parameters the stages take, by default those of cctag/Params.hpp
 struct Params {
     float canny_thr_low = 0.01f;
     float canny_thr_high = 0.04f;
-    std::uint32_t dist_search = 30;
-    std::uint32_t n_crowns = 3;
-    float ratio_voting = 4.f;
 };
 
 /// Device memory, as a pointer and a size in bytes
@@ -80,26 +68,19 @@ struct Buffers {
     std::vector<Level> levels;
     /// Temporary image the size of level 0
     float* intermediate;
-    /// Temporary value per row of level 0
-    std::uint32_t* rows;
 
     Buffers(sycl::queue& queue, std::uint32_t width, std::uint32_t height, std::uint32_t count) :
         queue(queue) {
         intermediate = sycl::malloc_device<float>(std::size_t(width) * height, queue);
-        rows = sycl::malloc_device<std::uint32_t>(height, queue);
         for (std::uint32_t i = 0; i < count; ++i) {
             const std::size_t size = std::size_t(width) * height;
-            const std::uint32_t capacity = std::min<std::size_t>(size, cctag::portable::max_edgels);
             levels.push_back(
                 {width,
                  height,
                  sycl::malloc_device<std::uint8_t>(size, queue),
                  sycl::malloc_device<std::int16_t>(size, queue),
                  sycl::malloc_device<std::int16_t>(size, queue),
-                 sycl::malloc_device<Mark>(size, queue),
-                 sycl::malloc_device<Edgel>(capacity, queue),
-                 capacity,
-                 sycl::malloc_device<std::uint32_t>(1, queue)}
+                 sycl::malloc_device<Mark>(size, queue)}
             );
             width /= 2;
             height /= 2;
@@ -113,11 +94,8 @@ struct Buffers {
             sycl::free(level.dx, queue);
             sycl::free(level.dy, queue);
             sycl::free(level.map, queue);
-            sycl::free(level.edgels, queue);
-            sycl::free(level.edgel_count, queue);
         }
         sycl::free(intermediate, queue);
-        sycl::free(rows, queue);
     }
 };
 
@@ -142,53 +120,17 @@ void run(Stage stage, Buffers& buffers, const Params& params, std::size_t i) {
                 params.canny_thr_high * 256
             );
             break;
-        case Stage::hysteresis:
-            cctag::portable::hysteresis(queue, level);
-            break;
-        case Stage::thin:
-            cctag::portable::thin(queue, level, reinterpret_cast<Mark*>(buffers.intermediate));
-            break;
-        case Stage::link:
-            cctag::portable::link(
-                queue,
-                level,
-                params.dist_search,
-                reinterpret_cast<std::int32_t*>(buffers.intermediate),
-                buffers.rows
-            );
-            break;
-        case Stage::vote:
-            cctag::portable::vote(queue, level, params.n_crowns, params.ratio_voting);
-            break;
     }
-}
-
-/// The number of edge points of a level, at most its capacity
-std::uint32_t edgel_count(sycl::queue& queue, const Level& level) {
-    std::uint32_t count = 0;
-    queue.memcpy(&count, level.edgel_count, sizeof(count)).wait();
-    return std::min(count, level.capacity);
 }
 
 /// What a stage rewrites in place on a level, so a repeated call must start from a copy, or
-/// nothing for stages whose outputs do not feed their inputs. The rest of what link writes, the
-/// count, the index and the rows, it rewrites whole before reading.
-std::vector<Span> overwritten(Stage stage, sycl::queue& queue, const Level& level) {
-    const std::size_t pixels = std::size_t(level.width) * level.height;
-    switch (stage) {
-        case Stage::hysteresis:
-        case Stage::thin:
-            return {{level.map, pixels * sizeof(Mark)}};
-        case Stage::vote:
-            // The vote fields are summed into
-            return {{level.edgels, edgel_count(queue, level) * sizeof(Edgel)}};
-        default:
-            return {};
-    }
+/// nothing for stages whose outputs do not feed their inputs, which is every current stage
+std::vector<Span> overwritten(Stage stage, const Level& level) {
+    return {};
 }
 
 /// What a stage writes on a level, compared by --verify
-std::vector<Span> outputs(Stage stage, sycl::queue& queue, const Level& level) {
+std::vector<Span> outputs(Stage stage, const Level& level) {
     const std::size_t pixels = std::size_t(level.width) * level.height;
     switch (stage) {
         case Stage::gradient:
@@ -196,13 +138,6 @@ std::vector<Span> outputs(Stage stage, sycl::queue& queue, const Level& level) {
                 {level.dx, pixels * sizeof(std::int16_t)},
                 {level.dy, pixels * sizeof(std::int16_t)}
             };
-        case Stage::link:
-            return {
-                {level.edgel_count, sizeof(std::uint32_t)},
-                {level.edgels, edgel_count(queue, level) * sizeof(Edgel)}
-            };
-        case Stage::vote:
-            return {{level.edgels, edgel_count(queue, level) * sizeof(Edgel)}};
         default:
             return {{level.map, pixels * sizeof(Mark)}};
     }
@@ -298,7 +233,7 @@ int main(int argc, char** argv) {
 
     CLI::App app(
         "Times one stage of the portable SYCL pipeline in isolation, after running the stages "
-        "before it once on the image. 08 center_costs is not covered. "
+        "before it once on the image. "
         "ACPP_VISIBILITY_MASK=cuda|omp "
         "picks the device.",
         "cctag-portable-bench"
@@ -335,11 +270,6 @@ int main(int argc, char** argv) {
     app.add_option("--canny-thr-low", params.canny_thr_low, "_cannyThrLow")->capture_default_str();
     app.add_option("--canny-thr-high", params.canny_thr_high, "_cannyThrHigh")
         ->capture_default_str();
-    app.add_option("--dist-search", params.dist_search, "_distSearch")->capture_default_str();
-    app.add_option("--crowns", params.n_crowns, "_nCrowns")
-        ->check(CLI::Range(1u, cctag::portable::max_crowns))
-        ->capture_default_str();
-    app.add_option("--ratio-voting", params.ratio_voting, "_ratioVoting")->capture_default_str();
     CLI11_PARSE(app, argc, argv);
 
     const Stage stage = stage_names.at(stage_name);
@@ -401,7 +331,7 @@ int main(int argc, char** argv) {
     std::vector<Span> targets;
     std::vector<Span> saved;
     for (const std::size_t i : selected) {
-        for (const Span& target : overwritten(stage, queue, levels[i])) {
+        for (const Span& target : overwritten(stage, levels[i])) {
             targets.push_back(target);
             saved.push_back({sycl::malloc_device<std::uint8_t>(target.bytes, queue), target.bytes});
             queue.memcpy(saved.back().data, target.data, target.bytes);
@@ -425,7 +355,7 @@ int main(int argc, char** argv) {
     if (verify && !pyramid) {
         call();
         for (const std::size_t i : selected) {
-            reference.push_back(download(queue, outputs(stage, queue, levels[i])));
+            reference.push_back(download(queue, outputs(stage, levels[i])));
         }
     }
     // The pyramid's destinations start blank, so --verify sees what the timed calls wrote
@@ -480,7 +410,7 @@ int main(int argc, char** argv) {
             const std::size_t i = selected[j];
             wrong += pyramid
                 ? pyramid_mismatches(queue, levels[i], levels[i + 1])
-                : mismatches(reference[j], download(queue, outputs(stage, queue, levels[i])));
+                : mismatches(reference[j], download(queue, outputs(stage, levels[i])));
         }
     }
     for (const Span& span : saved) {
@@ -534,10 +464,7 @@ int main(int argc, char** argv) {
             {"samples", samples},
             {"warmup", warmup},
             {"canny_thr_low", rounded(params.canny_thr_low)},
-            {"canny_thr_high", rounded(params.canny_thr_high)},
-            {"dist_search", params.dist_search},
-            {"crowns", params.n_crowns},
-            {"ratio_voting", rounded(params.ratio_voting)}
+            {"canny_thr_high", rounded(params.canny_thr_high)}
         };
         Json summary{
             {"type", "summary"},

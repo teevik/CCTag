@@ -6,12 +6,7 @@ set(CCTAG_PORTABLE_SYCL_SOURCES
     Pipeline.cpp
     01_Pyramid.cpp
     02_Gradient.cpp
-    03_Suppress.cpp
-    04_Hysteresis.cpp
-    05_Thin.cpp
-    06_Link.cpp
-    07_Vote.cpp
-    08_Center.cpp)
+    03_Suppress.cpp)
 add_library(cctag_portable OBJECT ${CCTAG_PORTABLE_SYCL_SOURCES})
 set_target_properties(cctag_portable PROPERTIES
     CXX_STANDARD 17
