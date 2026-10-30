@@ -31,7 +31,7 @@ struct Plane {
     }
 
     /// The pixel in row y, column x
-    T& at(int y, int x) const {
+    T& operator[](int y, int x) const {
         return data[std::size_t(y) * width + x];
     }
 

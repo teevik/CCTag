@@ -83,7 +83,7 @@ void allocate(Pipeline& pipeline, std::uint32_t width, std::uint32_t height, std
 } // namespace
 
 Pipeline& pipeline(int pipe_id) {
-    // Gets cleaned up on program exit
+    // Leaked since static destructor would run after main, where SYCL backend is already shut down
     static std::map<int, Pipeline>& pipelines = *new std::map<int, Pipeline>;
     static std::mutex mutex;
 
@@ -111,17 +111,19 @@ void run(
     float canny_thr_high
 ) {
     allocate(pipeline, width, height, levels);
-    sycl::queue& queue = pipeline.queue;
 
-    const std::vector<Level>& pyramid = pipeline.levels;
+    auto& queue = pipeline.queue;
+    const auto& pyramid = pipeline.levels;
     queue.memcpy(pyramid[0].source, image, std::size_t(width) * height);
+
     for (std::size_t i = 1; i < pyramid.size(); ++i) {
         downsample(queue, pyramid[i - 1], pyramid[i]);
     }
-    // cvRecodedCanny scales the thresholds by 256 to compare with the magnitude
+
     const float low = canny_thr_low * 256;
     const float high = canny_thr_high * 256;
-    for (const Level& level : pyramid) {
+
+    for (const auto& level : pyramid) {
         gradient(queue, level, pipeline.intermediate);
         suppress(queue, level, low, high);
     }
@@ -138,15 +140,19 @@ void download_gradient(
     std::int16_t* dx,
     std::int16_t* dy
 ) {
-    const Level& src = pipeline.levels[level];
-    const std::size_t size = std::size_t(src.width) * src.height;
+    const auto& src = pipeline.levels[level];
+    const auto size = std::size_t(src.width) * std::size_t(src.height);
+
     pipeline.queue.memcpy(dx, src.dx, size * sizeof(std::int16_t));
-    pipeline.queue.memcpy(dy, src.dy, size * sizeof(std::int16_t)).wait();
+    pipeline.queue.memcpy(dy, src.dy, size * sizeof(std::int16_t));
+    pipeline.queue.wait();
 }
 
 void download_map(Pipeline& pipeline, std::uint32_t level, Mark* dst) {
-    const Level& src = pipeline.levels[level];
-    pipeline.queue.memcpy(dst, src.map, std::size_t(src.width) * src.height).wait();
+    const auto& src = pipeline.levels[level];
+    const auto size = std::size_t(src.width) * std::size_t(src.height);
+
+    pipeline.queue.memcpy(dst, src.map, size).wait();
 }
 
 } // namespace portable

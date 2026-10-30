@@ -69,10 +69,10 @@ void filter_columns(
         float sum = 0.0f;
         for (int offset = -radius; offset <= radius; ++offset) {
             const int row = sycl::clamp(y + offset, 0, height - 1);
-            sum += weights(offset) * in.at(row, x);
+            sum += weights(offset) * in[row, x];
         }
 
-        out.at(y, x) = sum;
+        out[y, x] = sum;
     });
 }
 
@@ -93,17 +93,17 @@ void filter_rows(
         float sum = 0.0f;
         for (int offset = -radius; offset <= radius; ++offset) {
             const int column = sycl::clamp(x + offset, 0, width - 1);
-            sum += weights(offset) * in.at(y, column);
+            sum += weights(offset) * in[y, column];
         }
 
-        out.at(y, x) = static_cast<std::int16_t>(sycl::rint(sum));
+        out[y, x] = static_cast<std::int16_t>(sycl::rint(sum));
     });
 }
 
 } // namespace
 
 void gradient(sycl::queue& queue, const Level& level, float* scratch) {
-    const Plane<float> intermediate{scratch, level.width, level.height};
+    const auto intermediate = Plane<float>{scratch, level.width, level.height};
 
     filter_columns(queue, level.source_plane(), gauss, intermediate);
     filter_rows(queue, intermediate, derivative, level.dx_plane());

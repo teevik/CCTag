@@ -9,7 +9,7 @@ set(CCTAG_PORTABLE_SYCL_SOURCES
     03_Suppress.cpp)
 add_library(cctag_portable OBJECT ${CCTAG_PORTABLE_SYCL_SOURCES})
 set_target_properties(cctag_portable PROPERTIES
-    CXX_STANDARD 17
+    CXX_STANDARD 23
     POSITION_INDEPENDENT_CODE ON)
 target_include_directories(cctag_portable PRIVATE ${PROJECT_SOURCE_DIR}/src)
 add_sycl_to_target(TARGET cctag_portable SOURCES ${CCTAG_PORTABLE_SYCL_SOURCES})
@@ -24,7 +24,7 @@ if(CCTAG_BUILD_PORTABLE_BENCH)
   find_package(nlohmann_json 3.11 REQUIRED)
 
   add_executable(cctag-portable-bench bench/main.cpp $<TARGET_OBJECTS:cctag_portable>)
-  set_target_properties(cctag-portable-bench PROPERTIES CXX_STANDARD 17)
+  set_target_properties(cctag-portable-bench PROPERTIES CXX_STANDARD 23)
   target_include_directories(cctag-portable-bench PRIVATE ${PROJECT_SOURCE_DIR}/src)
   add_sycl_to_target(TARGET cctag-portable-bench SOURCES bench/main.cpp)
   target_link_libraries(cctag-portable-bench PRIVATE AdaptiveCpp::acpp-rt opencv_core
