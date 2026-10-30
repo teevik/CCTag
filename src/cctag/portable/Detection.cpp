@@ -5,10 +5,6 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/.
  */
-#include "portable/Detection.hpp"
-
-#include "portable/Pipeline.hpp"
-
 #include <cctag/CCTag.hpp>
 #include <cctag/Canny.hpp>
 #include <cctag/Detection.hpp>
@@ -19,6 +15,8 @@
 #include <cctag/Types.hpp>
 #include <cctag/Vote.hpp>
 #include <cctag/filter/thinning.hpp>
+#include <cctag/portable/Detection.hpp>
+#include <cctag/portable/Pipeline.hpp>
 
 #include <algorithm>
 #include <cassert>

@@ -12,7 +12,7 @@
 //
 // A batch is timed by the wall clock from an idle queue to an idle queue, so a call's time includes
 // its launch. The time of a batch of restores alone is subtracted to give the stage's time.
-#include "portable/Stages.hpp"
+#include <cctag/portable/sycl/Stages.hpp>
 
 #include <CLI/CLI.hpp>
 #include <nlohmann/json.hpp>
@@ -408,9 +408,8 @@ int main(int argc, char** argv) {
     if (verify) {
         for (std::size_t j = 0; j < selected.size(); ++j) {
             const std::size_t i = selected[j];
-            wrong += pyramid
-                ? pyramid_mismatches(queue, levels[i], levels[i + 1])
-                : mismatches(reference[j], download(queue, outputs(stage, levels[i])));
+            wrong += pyramid ? pyramid_mismatches(queue, levels[i], levels[i + 1])
+                             : mismatches(reference[j], download(queue, outputs(stage, levels[i])));
         }
     }
     for (const Span& span : saved) {

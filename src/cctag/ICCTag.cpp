@@ -10,7 +10,7 @@
 #include <cctag/Detection.hpp>
 #include <cctag/utils/LogTime.hpp>
 #ifdef CCTAG_WITH_SYCL
-#include "portable/Detection.hpp"
+#include <cctag/portable/Detection.hpp>
 #endif
 
 #include <boost/filesystem.hpp>

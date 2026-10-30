@@ -5,10 +5,10 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/.
  */
-#ifndef CCTAG_PORTABLE_STAGES_HPP
-#define CCTAG_PORTABLE_STAGES_HPP
+#ifndef CCTAG_PORTABLE_SYCL_STAGES_HPP
+#define CCTAG_PORTABLE_SYCL_STAGES_HPP
 
-#include "portable/Pipeline.hpp"
+#include <cctag/portable/Pipeline.hpp>
 
 #include <sycl/sycl.hpp>
 

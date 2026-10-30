@@ -258,10 +258,6 @@ message(STATUS "Found TBB: version ${TBB_VERSION}")
 
 add_subdirectory(src)
 
-if(CCTAG_WITH_SYCL)
-  add_subdirectory(portable)
-endif()
-
 if(CCTAG_BUILD_DOC)
  add_subdirectory(doc)
 endif()

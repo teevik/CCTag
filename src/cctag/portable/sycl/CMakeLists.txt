@@ -11,13 +11,10 @@ add_library(cctag_portable OBJECT ${CCTAG_PORTABLE_SYCL_SOURCES})
 set_target_properties(cctag_portable PROPERTIES
     CXX_STANDARD 17
     POSITION_INDEPENDENT_CODE ON)
-target_include_directories(cctag_portable PRIVATE ${PROJECT_SOURCE_DIR})
+target_include_directories(cctag_portable PRIVATE ${PROJECT_SOURCE_DIR}/src)
 add_sycl_to_target(TARGET cctag_portable SOURCES ${CCTAG_PORTABLE_SYCL_SOURCES})
 
-target_sources(CCTag PRIVATE
-    ${CMAKE_CURRENT_SOURCE_DIR}/Detection.cpp
-    $<TARGET_OBJECTS:cctag_portable>)
-target_include_directories(CCTag PRIVATE ${PROJECT_SOURCE_DIR})
+target_sources(CCTag PRIVATE $<TARGET_OBJECTS:cctag_portable>)
 target_compile_definitions(CCTag PRIVATE CCTAG_WITH_SYCL)
 target_link_libraries(CCTag PRIVATE AdaptiveCpp::acpp-rt)
 
@@ -28,7 +25,7 @@ if(CCTAG_BUILD_PORTABLE_BENCH)
 
   add_executable(cctag-portable-bench bench/main.cpp $<TARGET_OBJECTS:cctag_portable>)
   set_target_properties(cctag-portable-bench PROPERTIES CXX_STANDARD 17)
-  target_include_directories(cctag-portable-bench PRIVATE ${PROJECT_SOURCE_DIR})
+  target_include_directories(cctag-portable-bench PRIVATE ${PROJECT_SOURCE_DIR}/src)
   add_sycl_to_target(TARGET cctag-portable-bench SOURCES bench/main.cpp)
   target_link_libraries(cctag-portable-bench PRIVATE AdaptiveCpp::acpp-rt opencv_core
     opencv_imgcodecs CLI11::CLI11 nlohmann_json::nlohmann_json)

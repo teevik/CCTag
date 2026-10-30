@@ -268,6 +268,10 @@ endif()
 set_target_properties(CCTag PROPERTIES VERSION ${PROJECT_VERSION})
 set_target_properties(CCTag PROPERTIES DEBUG_POSTFIX "d")
 
+if(CCTAG_WITH_SYCL)
+  add_subdirectory(cctag/portable)
+endif()
+
 
 # EXPORTING THE LIBRARY
 #
