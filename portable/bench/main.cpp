@@ -344,6 +344,9 @@ int main(int argc, char** argv) {
 
     const Stage stage = stage_names.at(stage_name);
     const bool pyramid = stage == Stage::pyramid;
+    const bool suppress = stage == Stage::suppress;
+    // The stages whose bytes per call and bandwidth are reported
+    const bool counted = pyramid || suppress;
     // The pyramid's calls write the next level, so its last level is no source
     const std::uint32_t last = pyramid ? level_count - 1 : level_count;
     if (last == 0) {
@@ -436,6 +439,14 @@ int main(int argc, char** argv) {
             bytes += 5 * pixels;
         }
     }
+    if (suppress) {
+        for (const std::size_t i : selected) {
+            const std::size_t pixels = std::size_t(levels[i].width) * levels[i].height;
+            // Every output pixel reads its two int16 gradients and writes itself, the neighbours'
+            // gradients counted as cache hits
+            bytes += 5 * pixels;
+        }
+    }
     queue.wait();
 
     std::vector<Json> records;
@@ -496,7 +507,7 @@ int main(int argc, char** argv) {
             restore_median_ns * 1e-3
         );
     }
-    if (pyramid) {
+    if (counted) {
         std::printf(", %.2f MB, %.1f GB/s", bytes * 1e-6, gb_per_s);
     }
     std::printf(", %zu x %zu calls on %s\n", samples, batch, device.c_str());
@@ -535,7 +546,7 @@ int main(int argc, char** argv) {
             {"call_median_ns", call_median_ns},
             {"restore_median_ns", restore_median_ns}
         };
-        if (pyramid) {
+        if (counted) {
             run["bytes_per_call"] = bytes;
             summary["gb_per_s"] = gb_per_s;
         }
