@@ -55,6 +55,11 @@ struct Level {
     std::int16_t* dy;
     Mark* map;
 
+    /// The number of pixels
+    std::size_t size() const {
+        return std::size_t(width) * height;
+    }
+
     Plane<std::uint8_t> source_plane() const {
         return {source, width, height};
     }

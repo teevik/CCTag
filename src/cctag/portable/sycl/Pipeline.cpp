@@ -114,7 +114,7 @@ void run(
 
     auto& queue = pipeline.queue;
     const auto& pyramid = pipeline.levels;
-    queue.memcpy(pyramid[0].source, image, std::size_t(width) * height);
+    queue.memcpy(pyramid[0].source, image, pyramid[0].size());
 
     for (std::size_t i = 1; i < pyramid.size(); ++i) {
         downsample(queue, pyramid[i - 1], pyramid[i]);
@@ -131,7 +131,7 @@ void run(
 
 void download_source(Pipeline& pipeline, std::uint32_t level, std::uint8_t* dst) {
     const Level& src = pipeline.levels[level];
-    pipeline.queue.memcpy(dst, src.source, std::size_t(src.width) * src.height).wait();
+    pipeline.queue.memcpy(dst, src.source, src.size()).wait();
 }
 
 void download_gradient(
@@ -140,19 +140,15 @@ void download_gradient(
     std::int16_t* dx,
     std::int16_t* dy
 ) {
-    const auto& src = pipeline.levels[level];
-    const auto size = std::size_t(src.width) * std::size_t(src.height);
-
-    pipeline.queue.memcpy(dx, src.dx, size * sizeof(std::int16_t));
-    pipeline.queue.memcpy(dy, src.dy, size * sizeof(std::int16_t));
+    const Level& src = pipeline.levels[level];
+    pipeline.queue.memcpy(dx, src.dx, src.size() * sizeof(std::int16_t));
+    pipeline.queue.memcpy(dy, src.dy, src.size() * sizeof(std::int16_t));
     pipeline.queue.wait();
 }
 
 void download_map(Pipeline& pipeline, std::uint32_t level, Mark* dst) {
-    const auto& src = pipeline.levels[level];
-    const auto size = std::size_t(src.width) * std::size_t(src.height);
-
-    pipeline.queue.memcpy(dst, src.map, size).wait();
+    const Level& src = pipeline.levels[level];
+    pipeline.queue.memcpy(dst, src.map, src.size()).wait();
 }
 
 } // namespace portable
